@@ -1,9 +1,12 @@
 etc/credentials.enc
 etc/google_cookies.json
-var/
+var/chromium-profile/
+var/chromium-*
+var/*.db
 *.log
 *.pyc
 __pycache__/
 .env
 *.key
 *.pem
+var/logs/
