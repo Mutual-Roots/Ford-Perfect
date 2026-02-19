@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# qwen-code(1) — Ford Perfect coding agent (Qwen-Coder-Plus)
+#
+# SYNOPSIS
+#   qwen-code [OPTIONS] [TASK...]
+#   echo "task" | qwen-code [OPTIONS]
+#
+# DESCRIPTION
+#   Sends a coding task to qwen-coder-plus via brain.ask().
+#   Reads the coding HEADER.md as system prompt.
+#   Writes response to stdout (and optionally a file).
+#
+# OPTIONS
+#   -o, --output FILE     Write response to FILE (in addition to stdout)
+#   -m, --model MODEL     Override model (default: qwen-coder-plus)
+#   -t, --max-tokens N    Max output tokens (default: 3000)
+#   -j, --json            Output raw JSON (includes usage/tokens)
+#   -v, --verbose         Print metadata to stderr
+#   -h, --help            Show this help
+#
+# EXAMPLES
+#   qwen-code "write a python function to parse JSON safely"
+#   echo "refactor this: $(cat foo.py)" | qwen-code -o out.py
+#   qwen-code -v "write a bash one-liner to count lines in a file"
+#
+# EXIT CODES
+#   0  success
+#   1  error (API failure, missing prompt, etc.)
+#   2  usage error
+#
+# FILES
+#   /opt/ai-orchestrator/skills/agent-headers/coding/HEADER.md  system prompt
+#   /opt/ai-orchestrator/lib/brain_cli.py                       API bridge
+#
+set -euo pipefail
+
+ORCH="/opt/ai-orchestrator"
+HEADER="$ORCH/skills/agent-headers/coding/HEADER.md"
+BRAIN="$ORCH/lib/brain_cli.py"
+MODEL="qwen-coder-plus"
+MAX_TOKENS=3000
+OUTPUT_FILE=""
+OUTPUT_JSON=false
+VERBOSE=false
+
+die() { echo "qwen-code: $*" >&2; exit 1; }
+usage() {
+    grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \?//'
+    exit "${1:-0}"
+}
+
+# Parse args
+TASK_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)      usage 0 ;;
+        -o|--output)    OUTPUT_FILE="${2:?--output requires a filename}"; shift 2 ;;
+        -m|--model)     MODEL="${2:?--model requires a model name}"; shift 2 ;;
+        -t|--max-tokens) MAX_TOKENS="${2:?--max-tokens requires a number}"; shift 2 ;;
+        -j|--json)      OUTPUT_JSON=true; shift ;;
+        -v|--verbose)   VERBOSE=true; shift ;;
+        --) shift; TASK_ARGS+=("$@"); break ;;
+        -*) die "unknown option: $1 (try --help)" ;;
+        *)  TASK_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# Verify dependencies
+[[ -f "$HEADER" ]] || die "system prompt not found: $HEADER"
+[[ -f "$BRAIN" ]]  || die "brain_cli not found: $BRAIN"
+command -v python3 >/dev/null 2>&1 || die "python3 not found"
+
+# Source API key if not already set
+if [[ -z "${DASHSCOPE_INTL_API_KEY:-}" ]]; then
+    # shellcheck source=/root/.bashrc
+    source /root/.bashrc 2>/dev/null || true
+fi
+[[ -n "${DASHSCOPE_INTL_API_KEY:-}" ]] || die "DASHSCOPE_INTL_API_KEY not set"
+
+# Build CLI args
+CLI_ARGS=(
+    python3 "$BRAIN"
+    --model "$MODEL"
+    --system-file "$HEADER"
+    --max-tokens "$MAX_TOKENS"
+)
+$OUTPUT_JSON && CLI_ARGS+=(--json)
+
+# Get task from args or stdin
+if [[ ${#TASK_ARGS[@]} -gt 0 ]]; then
+    TASK="${TASK_ARGS[*]}"
+    if $VERBOSE; then
+        echo "[qwen-code] model=$MODEL task=${TASK:0:80}..." >&2
+    fi
+    RESULT=$(echo "$TASK" | "${CLI_ARGS[@]}") || {
+        echo "qwen-code: API call failed" >&2
+        exit 1
+    }
+elif [[ ! -t 0 ]]; then
+    # stdin
+    if $VERBOSE; then
+        echo "[qwen-code] model=$MODEL reading task from stdin..." >&2
+    fi
+    RESULT=$("${CLI_ARGS[@]}") || {
+        echo "qwen-code: API call failed" >&2
+        exit 1
+    }
+else
+    echo "qwen-code: no task provided (use argument or pipe stdin)" >&2
+    usage 2
+fi
+
+# Output
+echo "$RESULT"
+
+if [[ -n "$OUTPUT_FILE" ]]; then
+    echo "$RESULT" > "$OUTPUT_FILE"
+    $VERBOSE && echo "[qwen-code] wrote to $OUTPUT_FILE" >&2
+fi

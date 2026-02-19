@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# qwen-task(1) — Ford Perfect task runner with agent routing
+#
+# SYNOPSIS
+#   qwen-task [OPTIONS] [TASK...]
+#   echo "task" | qwen-task [OPTIONS]
+#   qwen-task --file TASKFILE [OPTIONS]
+#
+# DESCRIPTION
+#   Routes tasks to the appropriate Qwen agent based on --type.
+#   Logs all runs to var/logs/tasks.log (TSV).
+#
+# OPTIONS
+#   -t, --type TYPE       Agent type: coding|research|philosophy
+#                         (default: coding)
+#   -f, --file FILE       Read task from FILE instead of args/stdin
+#   -o, --output FILE     Write response to FILE
+#   -m, --model MODEL     Override model for this run
+#   --max-tokens N        Max output tokens (default: 3000)
+#   -j, --json            Output raw JSON (includes usage)
+#   -v, --verbose         Print metadata to stderr
+#   -h, --help            Show this help
+#
+# TASK TYPES
+#   coding      → qwen-coder-plus  (header: skills/agent-headers/coding/HEADER.md)
+#   research    → qwen-plus        (header: skills/agent-headers/research/HEADER.md)
+#   philosophy  → qwen-plus        (header: skills/agent-headers/philosophy/HEADER.md)
+#
+# LOG FORMAT (TSV: var/logs/tasks.log)
+#   timestamp  type  model  input_tokens  output_tokens  cost_usd  latency_ms
+#
+# EXAMPLES
+#   qwen-task "write a bash one-liner to count lines in a file"
+#   qwen-task --type research "what is the latest on LLM reasoning?"
+#   qwen-task --type coding --file spec.md -o solution.py
+#
+# EXIT CODES
+#   0  success
+#   1  error
+#   2  usage error
+#
+set -euo pipefail
+
+ORCH="/opt/ai-orchestrator"
+BRAIN="$ORCH/lib/brain_cli.py"
+LOG_FILE="$ORCH/var/logs/tasks.log"
+
+# Defaults
+TASK_TYPE="coding"
+OUTPUT_FILE=""
+TASK_FILE=""
+MAX_TOKENS=3000
+OUTPUT_JSON=false
+VERBOSE=false
+MODEL_OVERRIDE=""
+
+die() { echo "qwen-task: $*" >&2; exit 1; }
+usage() {
+    grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \?//'
+    exit "${1:-0}"
+}
+
+# Map type → model + header
+resolve_agent() {
+    local type="$1"
+    case "$type" in
+        coding)
+            AGENT_MODEL="${MODEL_OVERRIDE:-qwen-coder-plus}"
+            AGENT_HEADER="$ORCH/skills/agent-headers/coding/HEADER.md"
+            ;;
+        research)
+            AGENT_MODEL="${MODEL_OVERRIDE:-qwen-plus-latest}"
+            AGENT_HEADER="$ORCH/skills/agent-headers/research/HEADER.md"
+            ;;
+        philosophy)
+            AGENT_MODEL="${MODEL_OVERRIDE:-qwen-plus-latest}"
+            AGENT_HEADER="$ORCH/skills/agent-headers/philosophy/HEADER.md"
+            ;;
+        *)
+            die "unknown type '$type'. Valid: coding|research|philosophy"
+            ;;
+    esac
+}
+
+# Parse args
+TASK_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)       usage 0 ;;
+        -t|--type)       TASK_TYPE="${2:?--type requires coding|research|philosophy}"; shift 2 ;;
+        -f|--file)       TASK_FILE="${2:?--file requires a path}"; shift 2 ;;
+        -o|--output)     OUTPUT_FILE="${2:?--output requires a filename}"; shift 2 ;;
+        -m|--model)      MODEL_OVERRIDE="${2:?--model requires a model name}"; shift 2 ;;
+        --max-tokens)    MAX_TOKENS="${2:?--max-tokens requires a number}"; shift 2 ;;
+        -j|--json)       OUTPUT_JSON=true; shift ;;
+        -v|--verbose)    VERBOSE=true; shift ;;
+        --) shift; TASK_ARGS+=("$@"); break ;;
+        -*) die "unknown option: $1 (try --help)" ;;
+        *)  TASK_ARGS+=("$1"); shift ;;
+    esac
+done
+
+# Verify deps
+[[ -f "$BRAIN" ]] || die "brain_cli not found: $BRAIN"
+command -v python3 >/dev/null 2>&1 || die "python3 not found"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Source API key
+if [[ -z "${DASHSCOPE_INTL_API_KEY:-}" ]]; then
+    source /root/.bashrc 2>/dev/null || true
+fi
+[[ -n "${DASHSCOPE_INTL_API_KEY:-}" ]] || die "DASHSCOPE_INTL_API_KEY not set"
+
+# Resolve agent
+resolve_agent "$TASK_TYPE"
+
+# Check header exists; create fallback stub if not
+if [[ ! -f "$AGENT_HEADER" ]]; then
+    if [[ "$TASK_TYPE" == "research" ]]; then
+        mkdir -p "$(dirname "$AGENT_HEADER")"
+        cat > "$AGENT_HEADER" <<'EOF'
+You are Ford Perfect, a critical-rationalist research agent. Be concise, cite sources when known, apply Popperian skepticism. Output findings directly. No fluff.
+EOF
+        [[ "$VERBOSE" == "true" ]] && echo "[qwen-task] created stub header: $AGENT_HEADER" >&2
+    elif [[ "$TASK_TYPE" == "philosophy" ]]; then
+        mkdir -p "$(dirname "$AGENT_HEADER")"
+        cat > "$AGENT_HEADER" <<'EOF'
+You are Ford Perfect, a critical-rationalist philosopher. Apply Popperian falsifiability, Deutsch's constructor theory, and evolutionary epistemology. Be rigorous. No mysticism.
+EOF
+        [[ "$VERBOSE" == "true" ]] && echo "[qwen-task] created stub header: $AGENT_HEADER" >&2
+    else
+        die "header not found: $AGENT_HEADER"
+    fi
+fi
+
+# Build CLI args (always JSON for logging)
+CLI_ARGS=(
+    python3 "$BRAIN"
+    --model "$AGENT_MODEL"
+    --system-file "$AGENT_HEADER"
+    --max-tokens "$MAX_TOKENS"
+    --json
+)
+
+# Get task
+if [[ -n "$TASK_FILE" ]]; then
+    [[ -f "$TASK_FILE" ]] || die "task file not found: $TASK_FILE"
+    TASK=$(cat "$TASK_FILE")
+elif [[ ${#TASK_ARGS[@]} -gt 0 ]]; then
+    TASK="${TASK_ARGS[*]}"
+elif [[ ! -t 0 ]]; then
+    TASK=$(cat)
+else
+    die "no task provided. Use argument, --file, or pipe stdin"
+fi
+
+[[ -n "$TASK" ]] || die "empty task"
+
+$VERBOSE && echo "[qwen-task] type=$TASK_TYPE model=$AGENT_MODEL" >&2
+
+# Run — capture JSON response
+T_START=$(date +%s%3N)
+RAW_JSON=$(echo "$TASK" | "${CLI_ARGS[@]}") || {
+    echo "qwen-task: API call failed" >&2
+    exit 1
+}
+T_END=$(date +%s%3N)
+LATENCY_MS=$(( T_END - T_START ))
+
+# Parse JSON response
+RESPONSE_TEXT=$(echo "$RAW_JSON" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d.get('text',''))
+" 2>/dev/null) || RESPONSE_TEXT="$RAW_JSON"
+
+# Extract usage for logging
+LOG_DATA=$(echo "$RAW_JSON" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    u = d.get('usage', {})
+    inp = u.get('prompt_tokens', 0)
+    out = u.get('completion_tokens', 0)
+    cost = (inp * 0.0000004) + (out * 0.0000012)
+    print(f\"{inp}\t{out}\t{cost:.8f}\")
+except:
+    print('0\t0\t0.00000000')
+" 2>/dev/null) || LOG_DATA="0	0	0.00000000"
+
+# Write TSV log
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo -e "$TIMESTAMP\t$TASK_TYPE\t$AGENT_MODEL\t$LOG_DATA\t$LATENCY_MS" >> "$LOG_FILE"
+
+# Output
+if $OUTPUT_JSON; then
+    echo "$RAW_JSON"
+else
+    echo "$RESPONSE_TEXT"
+fi
+
+if [[ -n "$OUTPUT_FILE" ]]; then
+    echo "$RESPONSE_TEXT" > "$OUTPUT_FILE"
+    $VERBOSE && echo "[qwen-task] wrote to $OUTPUT_FILE" >&2
+fi
