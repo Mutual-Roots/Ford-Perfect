@@ -1,0 +1,23 @@
+[Unit]
+Description=AI Orchestrator — Sequential Task Runner
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ai-orchestrator
+ExecStart=/usr/bin/python3 /opt/ai-orchestrator/bin/orchestrator
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/opt/ai-orchestrator/var/logs/orchestrator.log
+StandardError=append:/opt/ai-orchestrator/var/logs/orchestrator.log
+
+# Security Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/ai-orchestrator/var /root/.config/ai-orchestrator /tmp
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""CLI zum Einreichen von Tasks in die Queue."""
+import sys
+import argparse
+sys.path.insert(0, "/opt/ai-orchestrator")
+
+from lib.queue.sqlite_queue import TaskQueue, Task
+from lib.router.classifier import Router
+
+def main():
+    parser = argparse.ArgumentParser(description="AI Orchestrator - Task einreichen")
+    parser.add_argument("prompt", nargs="?", help="Prompt-Text (oder via stdin)")
+    parser.add_argument("--service", "-s", help="Service erzwingen (claude/gemini/copilot/openai)")
+    parser.add_argument("--priority", "-p", type=int, default=5, help="Priorität 1-10 (1=hoch)")
+    parser.add_argument("--attach", "-a", nargs="+", help="Anhänge (Dateipfade)")
+    parser.add_argument("--status", action="store_true", help="Queue-Status anzeigen")
+    parser.add_argument("--get", metavar="ID", help="Task-Ergebnis abrufen")
+    args = parser.parse_args()
+
+    queue = TaskQueue()
+
+    if args.status:
+        stats = queue.stats()
+        print("Queue-Status:")
+        for status, count in stats.items():
+            print(f"  {status:10s}: {count}")
+        return
+
+    if args.get:
+        task = queue.get(args.get)
+        if not task:
+            print(f"Task {args.get} nicht gefunden")
+            sys.exit(1)
+        print(f"ID:     {task.id}")
+        print(f"Status: {task.status}")
+        print(f"Type:   {task.task_type}")
+        print(f"Service: {task.service or 'auto'}")
+        if task.result:
+            print(f"\nErgebnis:\n{task.result}")
+        return
+
+    # Prompt lesen
+    prompt = args.prompt
+    if not prompt:
+        if not sys.stdin.isatty():
+            prompt = sys.stdin.read().strip()
+        else:
+            print("Prompt eingeben (Ctrl+D zum Abschicken):")
+            prompt = sys.stdin.read().strip()
+
+    if not prompt:
+        print("Kein Prompt angegeben.")
+        sys.exit(1)
+
+    # Task-Typ bestimmen
+    router = Router()
+    task_type, suggested_service = router.decide(prompt, args.attach or [])
+    service = args.service or suggested_service
+
+    task = Task(
+        prompt=prompt,
+        task_type=task_type,
+        attachments=args.attach or [],
+        service=service,
+        priority=args.priority,
+    )
+
+    task_id = queue.push(task)
+    print(f"Task eingereicht: {task_id}")
+    print(f"  Typ:     {task_type}")
+    print(f"  Service: {service}")
+    print(f"  Status:  abrufen mit: task-submit --get {task_id}")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+etc/credentials.enc
+etc/google_cookies.json
+var/
+*.log
+*.pyc
+__pycache__/
+.env
+*.key
+*.pem

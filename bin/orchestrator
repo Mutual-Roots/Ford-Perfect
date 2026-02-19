@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""
+AI Orchestrator — Hauptdaemon
+Sequenzieller Betrieb: Task prüfen → Ressourcen prüfen → Agent allokieren → Ausführen
+"""
+import sys
+import time
+import signal
+import logging
+import logging.handlers
+from pathlib import Path
+
+sys.path.insert(0, "/opt/ai-orchestrator")
+
+from lib.queue.sqlite_queue import TaskQueue, Task
+from lib.router.classifier import Router
+from lib.utils.resources import can_start_browser, snapshot
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+LOG_FILE = Path("/opt/ai-orchestrator/var/logs/orchestrator.log")
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=5*1024*1024, backupCount=3
+        ),
+        logging.StreamHandler(sys.stdout),
+    ]
+)
+log = logging.getLogger("orchestrator")
+
+# ── Adapter-Registry ─────────────────────────────────────────────────────────
+# Lazy-Import: nur laden wenn Service benötigt wird
+ADAPTER_MAP = {
+    "claude":  "lib.adapters.claude_web.ClaudeAdapter",
+    "gemini":  "lib.adapters.gemini_web.GeminiAdapter",
+    "copilot": "lib.adapters.copilot_web.CopilotAdapter",
+    "openai":  "lib.adapters.openai_web.OpenAIAdapter",
+}
+
+ENABLED_SERVICES = set(ADAPTER_MAP.keys())
+
+
+def load_adapter(service: str):
+    """Lädt Adapter-Klasse dynamisch — kein unnötiger Import."""
+    if service not in ADAPTER_MAP:
+        raise ValueError(f"Unbekannter Service: {service!r}")
+    module_path, class_name = ADAPTER_MAP[service].rsplit(".", 1)
+    import importlib
+    mod = importlib.import_module(module_path)
+    return getattr(mod, class_name)
+
+
+def execute_task(task: Task, queue: TaskQueue) -> bool:
+    """
+    Führt einen Task aus:
+    1. Ressourcen prüfen
+    2. Service bestimmen
+    3. Adapter starten
+    4. Task ausführen
+    5. Ergebnis speichern
+    """
+    log.info("Task %s | Typ: %s | Service: %s", task.id, task.task_type, task.service)
+
+    # ── 1. Ressourcen prüfen ─────────────────────────────────────
+    ok, reason = can_start_browser()
+    if not ok:
+        log.warning("Ressourcen unzureichend für Task %s: %s — warte 60s", task.id, reason)
+        queue.fail(task.id, max_attempts=99)  # Nicht als Fehler zählen, nur zurückstellen
+        return False
+
+    res = snapshot()
+    log.info("Ressourcen OK — RAM: %dMB, Disk: %dMB, Load: %.2f",
+             res["ram_free_mb"], res["disk_free_mb"], res["load_1min"])
+
+    # ── 2. Service bestimmen ──────────────────────────────────────
+    service = task.service
+    if not service or service not in ENABLED_SERVICES:
+        router = Router()
+        _, service = router.decide(task.prompt, task.attachments)
+        if service not in ENABLED_SERVICES:
+            service = next(iter(ENABLED_SERVICES), None)
+    if not service:
+        log.error("Kein verfügbarer Service für Task %s", task.id)
+        queue.fail(task.id)
+        return False
+
+    log.info("Allokiere Service: %s für Task %s", service, task.id)
+
+    # ── 3. Adapter laden und starten ─────────────────────────────
+    AdapterClass = load_adapter(service)
+    adapter = AdapterClass()
+
+    try:
+        started = adapter.start(headless=True)
+        if not started:
+            log.error("Adapter %s konnte nicht gestartet werden (Session fehlt?)", service)
+            queue.fail(task.id)
+            return False
+
+        # ── 4. Task ausführen ─────────────────────────────────────
+        log.info("Sende Prompt (%d Zeichen) an %s", len(task.prompt), service)
+        response = adapter.ask(task.prompt)
+
+        if not response:
+            log.warning("Leere Antwort von %s für Task %s", service, task.id)
+            queue.fail(task.id)
+            return False
+
+        # ── 5. Ergebnis speichern ─────────────────────────────────
+        queue.complete(task.id, response)
+        log.info("Task %s abgeschlossen (%d Zeichen Antwort)", task.id, len(response))
+        return True
+
+    except Exception as e:
+        log.exception("Fehler bei Task %s: %s", task.id, e)
+        queue.fail(task.id)
+        return False
+    finally:
+        adapter.stop()
+
+
+class Orchestrator:
+    def __init__(self):
+        self.queue  = TaskQueue()
+        self.running = True
+        self.poll_interval = 10  # Sekunden zwischen Queue-Checks
+
+        signal.signal(signal.SIGTERM, self._shutdown)
+        signal.signal(signal.SIGINT,  self._shutdown)
+
+    def _shutdown(self, *_):
+        log.info("Shutdown-Signal empfangen — beende nach aktuellem Task")
+        self.running = False
+
+    def run(self):
+        log.info("AI Orchestrator gestartet. Aktivierte Services: %s", ENABLED_SERVICES)
+
+        while self.running:
+            task = self.queue.pop()
+
+            if not task:
+                time.sleep(self.poll_interval)
+                continue
+
+            log.info("Task aus Queue: %s (%s)", task.id, task.task_type)
+            execute_task(task, self.queue)
+
+            # Kurze Pause nach jedem Task — kein Dauerbetrieb
+            time.sleep(3)
+
+        log.info("Orchestrator beendet")
+
+
+if __name__ == "__main__":
+    Orchestrator().run()

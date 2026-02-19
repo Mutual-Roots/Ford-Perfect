@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Systemstatus auf einen Blick — inkl. API-Kosten und Modell-Verfügbarkeit."""
+import sys
+sys.path.insert(0, "/opt/ai-orchestrator")
+
+from lib.queue.sqlite_queue import TaskQueue
+from lib.utils.resources import snapshot
+from pathlib import Path
+
+q    = TaskQueue()
+res  = snapshot()
+stats = q.stats()
+
+print("╔══════════════════════════════════════╗")
+print("║    AI Orchestrator — Health Check    ║")
+print("╠══════════════════════════════════════╣")
+print(f"  RAM frei:    {res['ram_free_mb']:>6} MB")
+print(f"  /var frei:   {res['disk_free_mb']:>6} MB")
+print(f"  Load (1min): {res['load_1min']:>6.2f}")
+print("╠══════════════════════════════════════╣")
+total = sum(stats.values())
+for status in ("pending", "running", "done", "failed"):
+    count = stats.get(status, 0)
+    bar = "█" * min(count, 20)
+    print(f"  {status:8s}: {count:4d}  {bar}")
+print(f"  {'TOTAL':8s}: {total:4d}")
+print("╠══════════════════════════════════════╣")
+
+# ─── Web-Adapter Session-Check (Browser-Cookies) ─────────────────
+import sqlite3, shutil, tempfile, os
+cookie_db = Path("/opt/ai-orchestrator/var/chromium-profile/Default/Cookies")
+service_domains = {
+    "claude":  ["%claude.ai%", "%anthropic.com%"],
+    "gemini":  ["%google.com%", "%googleapis.com%"],
+    "copilot": ["%microsoft.com%", "%live.com%"],
+    "openai":  ["%openai.com%", "%chatgpt.com%"],
+}
+print("║     Web-Adapter (Browser-Sessions)   ║")
+print("╠══════════════════════════════════════╣")
+if cookie_db.exists():
+    tmp = tempfile.mktemp(suffix=".db")
+    shutil.copy2(str(cookie_db), tmp)
+    con = sqlite3.connect(tmp)
+    for svc, domains in service_domains.items():
+        like = " OR ".join(f"host_key LIKE '{d}'" for d in domains)
+        count = con.execute(f"SELECT COUNT(*) FROM cookies WHERE {like}").fetchone()[0]
+        status = f"✓ {count} cookies" if count > 0 else "✗ kein Login"
+        print(f"  {svc:8s}: {status}")
+    con.close()
+    os.unlink(tmp)
+else:
+    print("  Kein Chromium-Profil gefunden")
+
+# ─── API-Adapter Status ───────────────────────────────────────────
+print("╠══════════════════════════════════════╣")
+print("║     API-Adapter (Direkt-Zugriff)     ║")
+print("╠══════════════════════════════════════╣")
+try:
+    from lib.router.api_router import ApiRouter
+    router  = ApiRouter()
+    report  = router.status_report()
+    env     = os.environ
+
+    # Nach Provider gruppiert ausgeben
+    by_provider: dict[str, list] = {}
+    for alias, info in report.items():
+        prov = info["provider"]
+        by_provider.setdefault(prov, []).append((alias, info))
+
+    for prov, models in sorted(by_provider.items()):
+        print(f"  ── {prov}")
+        for alias, info in models:
+            icon  = "✓" if info["key_set"] else "✗"
+            tier  = info["tier"]
+            price = f"${info['cost_in']:.3f}/${info['cost_out']:.3f}/1M"
+            env_v = info["env_var"]
+            key_s = "Key gesetzt" if info["key_set"] else f"export {env_v}=..."
+            print(f"    {icon} {alias:20s} [{tier:8s}] {price}  {key_s}")
+
+except Exception as e:
+    print(f"  API-Router nicht verfügbar: {e}")
+
+# ─── Kosten-Monitor ───────────────────────────────────────────────
+try:
+    from lib.cost_monitor import CostMonitor
+    monitor = CostMonitor()
+    monitor.print_report()
+except Exception as e:
+    print(f"╠══════════════════════════════════════╣")
+    print(f"  Kostenmonitor nicht verfügbar: {e}")
+
+print("╚══════════════════════════════════════╝")

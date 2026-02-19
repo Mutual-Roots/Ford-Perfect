@@ -1,0 +1,83 @@
+# ============================================================
+# API-Routing-Regeln
+# Definiert welches API-Modell für welchen Task-Typ bevorzugt wird.
+#
+# Aliase beziehen sich auf etc/providers.yaml → aliases
+# ============================================================
+
+# -----------------------------------------------------------
+# Globale Strategie
+# -----------------------------------------------------------
+strategy:
+  # "api"  → API immer bevorzugen wenn Key vorhanden (schnell, günstig)
+  # "web"  → Web-Adapter bevorzugen, API nur als Fallback
+  # "cost" → günstigstes verfügbares Modell wählen (TODO: Preisvergleich)
+  prefer: api
+
+  # Prompt-Längenschwelle: Sehr lange Prompts → Gemini (großes Kontextfenster)
+  # Unterhalb dieser Schwelle → API bevorzugt
+  long_context_threshold_chars: 40000
+
+# -----------------------------------------------------------
+# Task-Typ → API-Modell-Mapping
+# Aliase müssen in etc/providers.yaml → aliases definiert sein.
+# -----------------------------------------------------------
+api_routing:
+
+  # ── Code (Claude bleibt stark, aber DeepSeek ist günstiger) ──
+  code_generation:
+    primary:  deepseek-v3       # stark in Code, günstig
+    fallback: qwen-plus         # Backup (Singapore)
+
+  code_review:
+    primary:  deepseek-v3
+    fallback: mistral-large     # EU-Datenschutz für Firmencode
+
+  debugging:
+    primary:  deepseek-v3
+    fallback: llama-70b         # Groq: kostenlos, schnell
+
+  # ── Reasoning / Analyse ─────────────────────────────────
+  complex_reasoning:
+    primary:  deepseek-r1       # spezialisiertes Reasoning-Modell
+    fallback: qwen-max          # Alibaba Singapore
+
+  # ── Allgemeine Fragen ────────────────────────────────────
+  general_qa:
+    primary:  qwen-turbo        # sehr günstig, ausreichend für Q&A
+    fallback: llama-8b          # Groq: kostenlos, instant
+
+  # ── Übersetzung / Sprache ────────────────────────────────
+  translation:
+    primary:  qwen-plus         # Qwen gut in CJK + Europäisch
+    fallback: mistral-small
+
+  # ── Zusammenfassungen ────────────────────────────────────
+  document_summary:
+    primary:  qwen-plus         # gutes Kontextfenster (131k)
+    fallback: llama-70b
+
+  # ── Kreatives Schreiben ──────────────────────────────────
+  creative_writing:
+    primary:  mistral-large     # Mistral gut in Prosa, EU-Datenschutz
+    fallback: qwen-max
+
+  # ── PDF/Dokument bleibt bei Gemini (multimodal) ──────────
+  # pdf_analysis: kein Eintrag → fällt auf Web-Adapter (Gemini) zurück
+
+  # ── Web-Recherche bleibt bei Copilot (Bing-Integration) ──
+  # web_research: kein Eintrag → fällt auf Web-Adapter zurück
+
+  # ── Bilder bleiben bei Web-Adaptern (multimodal) ─────────
+  # image_analysis: kein Eintrag → Web-Adapter
+  # image_generation: kein Eintrag → Web-Adapter
+
+# -----------------------------------------------------------
+# Explizite Web-only Tasks (immer Web-Adapter, nie API)
+# Verhindert dass API-Router diese übernimmt auch wenn Regeln definiert sind.
+# -----------------------------------------------------------
+web_only:
+  - pdf_analysis
+  - image_analysis
+  - image_generation
+  - long_context       # Gemini 1M-Kontext nicht via API replizierbar

@@ -1,0 +1,89 @@
+# Task-Routing-Regeln
+
+routing:
+  code_generation:
+    primary: claude
+    fallback: openai
+
+  code_review:
+    primary: claude
+    fallback: gemini
+
+  debugging:
+    primary: claude
+    fallback: openai
+
+  pdf_analysis:
+    primary: gemini
+    fallback: claude
+
+  document_summary:
+    primary: gemini
+    fallback: claude
+
+  image_analysis:
+    primary: gemini
+    fallback: openai
+
+  image_generation:
+    primary: openai
+    fallback: copilot
+
+  web_research:
+    primary: copilot
+    fallback: gemini
+
+  office_tasks:
+    primary: copilot
+    fallback: openai
+
+  long_context:
+    primary: gemini
+    only: true
+
+  general_qa:
+    primary: gemini
+    fallback: claude
+
+  complex_reasoning:
+    primary: claude
+    fallback: openai
+
+patterns:
+  code_generation:
+    - 'schreib.*code'
+    - 'schreib.*funktion'
+    - 'schreib.*skript'
+    - 'implementier'
+    - 'write.*code'
+    - 'write.*function'
+    - 'implement'
+    - 'create.*class'
+    - 'erstell.*skript'
+    - 'python.*funktion'
+    - 'funktion.*für'
+
+  debugging:
+    - 'debug'
+    - 'fehler.*fix'
+    - 'warum.*funktioniert'
+    - 'error.*in.*code'
+
+  image_generation:
+    - 'erstell.*bild'
+    - 'generier.*image'
+    - 'create.*image'
+    - 'zeichne'
+    - 'draw.*'
+
+  web_research:
+    - 'such.*aktuell'
+    - 'was.*heute'
+    - 'news.*über'
+    - 'current.*status'
+    - 'latest.*'
+
+  complex_reasoning:
+    - 'analysier.*komplex'
+    - 'erkläre.*warum'
+    - 'vergleich.*und.*bewert'

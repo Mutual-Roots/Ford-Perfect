@@ -1,0 +1,63 @@
+# AI Orchestrator - Hauptkonfiguration
+
+orchestrator:
+  max_parallel_browsers: 2       # RAM-realistisch auf 6.7GB
+  task_timeout_seconds: 120
+  retry_attempts: 3
+  log_level: INFO
+
+services:
+  claude:
+    url: "https://claude.ai"
+    session_file: "var/sessions/claude.pkl"
+    daily_limit: 100
+    enabled: true
+
+  gemini:
+    url: "https://aistudio.google.com"
+    session_file: "var/sessions/gemini.pkl"
+    daily_limit: 60
+    enabled: true
+
+  copilot:
+    url: "https://copilot.microsoft.com"
+    session_file: "var/sessions/copilot.pkl"
+    daily_limit: 50
+    enabled: true
+
+  openai:
+    url: "https://chat.openai.com"
+    session_file: "var/sessions/openai.pkl"
+    daily_limit: 80
+    enabled: false   # bis Abo steht
+
+selectors:
+  claude:
+    editor: 'div[role="textbox"]'
+    response: '.font-claude-response-body'
+    login_check: '[href="/login"]'
+  gemini:
+    editor: 'textarea.text-input-field, div[contenteditable="true"][aria-label*="prompt"]'
+    response: 'ms-cmark-node, .model-response-text, message-content'
+    login_check: 'a[href*="accounts.google.com/signin"]'
+  copilot:
+    editor: 'textarea[placeholder*="Ask"], #userInput, div[contenteditable="true"][role="textbox"]'
+    response: '.ac-textBlock, .response-message-content'
+    login_check: 'a[href*="login.microsoftonline"]'
+  openai:
+    editor: '#prompt-textarea'
+    response: '[data-message-author-role="assistant"] .prose, .markdown.prose'
+    login_check: '[href="/auth/login"]'
+
+humanizer:
+  min_delay_ms: 800
+  max_delay_ms: 3200
+  typo_rate: 0.02          # 2% Tippfehler + Korrektur
+  scroll_probability: 0.3  # 30% Chance auf Scroll vor Antwort lesen
+
+browser:
+  headless: true
+  binary: "/usr/bin/chromium"
+  driver: "/usr/bin/chromedriver"
+  user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+  window_size: [1280, 900]

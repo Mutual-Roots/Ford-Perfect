@@ -1,0 +1,323 @@
+# ============================================================
+# AI Orchestrator — API-Provider-Konfiguration
+# Alle Endpoints, Modelle, Preise und Limits
+#
+# WICHTIG: Qwen ausschließlich über dashscope-intl.aliyuncs.com
+#          (Alibaba Singapore) — niemals mainchina dashscope.aliyuncs.com
+# ============================================================
+
+# -----------------------------------------------------------
+# Tages-Budget (globales Limit in USD, gilt für alle Provider)
+# -----------------------------------------------------------
+budget:
+  daily_usd: 5.00           # Notbremse: Orchestrator lehnt neue API-Calls ab
+  warn_at_usd: 3.00         # Warnung im Health-Check
+  reset_hour_utc: 0         # Mitternacht UTC
+
+# -----------------------------------------------------------
+# Provider-Definitionen
+# -----------------------------------------------------------
+providers:
+
+  # ─── Alibaba Qwen — Singapore / International ───────────
+  qwen:
+    display_name: "Alibaba Qwen (Singapore)"
+    base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    # NICHT: dashscope.aliyuncs.com  (Mainland China — gesperrt)
+    auth_env: "DASHSCOPE_INTL_API_KEY"
+    auth_header: "Authorization"            # Bearer <key>
+    openai_compatible: true
+    timeout_s: 60
+    models:
+      qwen-max:
+        model_id: "qwen-max"
+        context_tokens: 32768
+        max_output_tokens: 8192
+        price_input_per_1m: 0.40            # USD / 1M Input-Token
+        price_output_per_1m: 1.20           # USD / 1M Output-Token
+        supports_system: true
+        tier: "premium"
+      qwen-plus:
+        model_id: "qwen-plus"
+        context_tokens: 131072
+        max_output_tokens: 8192
+        price_input_per_1m: 0.08
+        price_output_per_1m: 0.20
+        supports_system: true
+        tier: "balanced"
+      qwen-turbo:
+        model_id: "qwen-turbo"
+        context_tokens: 131072
+        max_output_tokens: 8192
+        price_input_per_1m: 0.02
+        price_output_per_1m: 0.06
+        supports_system: true
+        tier: "fast"
+      qwen-flash:
+        model_id: "qwen-flash"
+        context_tokens: 131072
+        max_output_tokens: 8192
+        price_input_per_1m: 0.01
+        price_output_per_1m: 0.03
+        supports_system: true
+        tier: "fast"
+      qwq-plus:
+        model_id: "qwq-plus"
+        context_tokens: 131072
+        max_output_tokens: 32768
+        price_input_per_1m: 0.14
+        price_output_per_1m: 0.56
+        supports_system: true
+        reasoning_model: true
+        tier: "premium"
+      qwen3-coder:
+        model_id: "qwen3-coder-480b-a35b-instruct"
+        context_tokens: 262144
+        max_output_tokens: 16384
+        price_input_per_1m: 0.25
+        price_output_per_1m: 1.00
+        supports_system: true
+        specialty: "code"
+        tier: "premium"
+      qwen3-235b:
+        model_id: "qwen3-235b-a22b"
+        context_tokens: 131072
+        max_output_tokens: 16384
+        price_input_per_1m: 0.14
+        price_output_per_1m: 0.56
+        supports_system: true
+        tier: "premium"
+      qwen3-32b:
+        model_id: "qwen3-32b"
+        context_tokens: 131072
+        max_output_tokens: 8192
+        price_input_per_1m: 0.05
+        price_output_per_1m: 0.20
+        supports_system: true
+        tier: "balanced"
+
+  # ─── DeepSeek ────────────────────────────────────────────
+  deepseek:
+    display_name: "DeepSeek"
+    base_url: "https://api.deepseek.com/v1"
+    auth_env: "DEEPSEEK_API_KEY"
+    auth_header: "Authorization"
+    openai_compatible: true
+    timeout_s: 120            # R1 braucht länger (Reasoning)
+    models:
+      deepseek-v3:
+        model_id: "deepseek-chat"           # API-Bezeichner für V3
+        context_tokens: 65536
+        max_output_tokens: 8192
+        price_input_per_1m: 0.27
+        price_output_per_1m: 1.10
+        supports_system: true
+        tier: "premium"
+      deepseek-r1:
+        model_id: "deepseek-reasoner"       # API-Bezeichner für R1
+        context_tokens: 65536
+        max_output_tokens: 32768
+        price_input_per_1m: 0.55
+        price_output_per_1m: 2.19
+        supports_system: false              # R1: kein System-Prompt
+        reasoning_model: true
+        tier: "premium"
+
+  # ─── Mistral (EU-Server, Paris) ──────────────────────────
+  mistral:
+    display_name: "Mistral AI (EU)"
+    base_url: "https://api.mistral.ai/v1"
+    auth_env: "MISTRAL_API_KEY"
+    auth_header: "Authorization"
+    openai_compatible: true
+    timeout_s: 60
+    models:
+      mistral-large:
+        model_id: "mistral-large-latest"
+        context_tokens: 131072
+        max_output_tokens: 4096
+        price_input_per_1m: 2.00
+        price_output_per_1m: 6.00
+        supports_system: true
+        tier: "premium"
+      mistral-small:
+        model_id: "mistral-small-latest"
+        context_tokens: 32768
+        max_output_tokens: 4096
+        price_input_per_1m: 0.10
+        price_output_per_1m: 0.30
+        supports_system: true
+        tier: "balanced"
+      codestral:
+        model_id: "codestral-latest"
+        context_tokens: 32768
+        max_output_tokens: 4096
+        price_input_per_1m: 0.20
+        price_output_per_1m: 0.60
+        supports_system: true
+        tier: "balanced"
+        specialty: "code"
+
+  # ─── Groq (US, kostenlos-Tier + günstig) ─────────────────
+  groq:
+    display_name: "Groq (LPU Inference)"
+    base_url: "https://api.groq.com/openai/v1"
+    auth_env: "GROQ_API_KEY"
+    auth_header: "Authorization"
+    openai_compatible: true
+    timeout_s: 30
+    # Groq hat Rate-Limits im Free-Tier (6000 TPM, 500 RPD)
+    rate_limits:
+      requests_per_day: 500
+      tokens_per_minute: 6000
+    models:
+      llama-3.3-70b:
+        model_id: "llama-3.3-70b-versatile"
+        context_tokens: 128000
+        max_output_tokens: 32768
+        price_input_per_1m: 0.059
+        price_output_per_1m: 0.079
+        supports_system: true
+        tier: "balanced"
+      llama-3.1-8b:
+        model_id: "llama-3.1-8b-instant"
+        context_tokens: 128000
+        max_output_tokens: 8192
+        price_input_per_1m: 0.005
+        price_output_per_1m: 0.008
+        supports_system: true
+        tier: "fast"
+      gemma2-9b:
+        model_id: "gemma2-9b-it"
+        context_tokens: 8192
+        max_output_tokens: 8192
+        price_input_per_1m: 0.002
+        price_output_per_1m: 0.002
+        supports_system: true
+        tier: "fast"
+      mixtral-8x7b:
+        model_id: "mixtral-8x7b-32768"
+        context_tokens: 32768
+        max_output_tokens: 32768
+        price_input_per_1m: 0.024
+        price_output_per_1m: 0.024
+        supports_system: true
+        tier: "balanced"
+
+  # ─── OpenRouter (US-Proxy, aggregiert viele Provider) ────
+  # Nützlich als Fallback für Qwen wenn dashscope-intl nicht erreichbar
+  openrouter:
+    display_name: "OpenRouter (US-Proxy)"
+    base_url: "https://openrouter.ai/api/v1"
+    auth_env: "OPENROUTER_API_KEY"
+    auth_header: "Authorization"
+    extra_headers:
+      HTTP-Referer: "https://ai-orchestrator.local"
+      X-Title: "AI Orchestrator"
+    openai_compatible: true
+    timeout_s: 90
+    models:
+      qwen-max-or:
+        model_id: "qwen/qwen-max"
+        context_tokens: 32768
+        max_output_tokens: 8192
+        price_input_per_1m: 0.40
+        price_output_per_1m: 1.20
+        supports_system: true
+        tier: "premium"
+        note: "Qwen-Fallback via OpenRouter (kein Mainland China)"
+      deepseek-v3-or:
+        model_id: "deepseek/deepseek-chat"
+        context_tokens: 65536
+        max_output_tokens: 8192
+        price_input_per_1m: 0.27
+        price_output_per_1m: 1.10
+        supports_system: true
+        tier: "premium"
+      qwen-plus-or:
+        model_id: "qwen/qwen-plus"
+        context_tokens: 1000000
+        max_output_tokens: 8192
+        price_input_per_1m: 0.40
+        price_output_per_1m: 1.20
+        supports_system: true
+        tier: "balanced"
+        note: "1M Token Kontext"
+      qwen-turbo-or:
+        model_id: "qwen/qwen-turbo"
+        context_tokens: 131072
+        max_output_tokens: 8192
+        price_input_per_1m: 0.05
+        price_output_per_1m: 0.15
+        supports_system: true
+        tier: "fast"
+      qwen-coder-or:
+        model_id: "qwen/qwen3-coder"
+        context_tokens: 262144
+        max_output_tokens: 16384
+        price_input_per_1m: 0.22
+        price_output_per_1m: 0.88
+        supports_system: true
+        tier: "balanced"
+        specialty: "code"
+      qwen-free-or:
+        model_id: "qwen/qwen3-4b:free"
+        context_tokens: 40960
+        max_output_tokens: 4096
+        price_input_per_1m: 0.00
+        price_output_per_1m: 0.00
+        supports_system: true
+        tier: "free"
+      deepseek-r1-free-or:
+        model_id: "deepseek/deepseek-r1-0528:free"
+        context_tokens: 163840
+        max_output_tokens: 32768
+        price_input_per_1m: 0.00
+        price_output_per_1m: 0.00
+        supports_system: true
+        reasoning_model: true
+        tier: "free"
+        note: "DeepSeek R1 kostenlos via OpenRouter"
+
+# -----------------------------------------------------------
+# Alias-Mapping: logischer Name → (provider, model_key)
+# Erlaubt dem Router, Modelle symbolisch anzusprechen
+# -----------------------------------------------------------
+aliases:
+  # ── Dashscope-Intl Singapore (primär) ────────────────────
+  qwen-max:      [qwen, qwen-max]
+  qwen-plus:     [qwen, qwen-plus]
+  qwen-turbo:    [qwen, qwen-turbo]
+  qwen-flash:    [qwen, qwen-flash]
+  qwen-coder:    [qwen, qwen3-coder]
+  qwq:           [qwen, qwq-plus]         # Reasoning-Modell
+  qwen3-big:     [qwen, qwen3-235b]
+  qwen3-mid:     [qwen, qwen3-32b]
+
+  # ── OpenRouter (Fallback wenn Dashscope down) ─────────────
+  qwen-max-or:   [openrouter, qwen-max-or]
+  qwen-plus-or:  [openrouter, qwen-plus-or]
+  qwen-turbo-or: [openrouter, qwen-turbo-or]
+  qwen-free:     [openrouter, qwen-free-or]
+  deepseek-r1-free: [openrouter, deepseek-r1-free-or]
+
+  # ── Qwen-Familie (Dashscope-intl) ────────────────────────
+
+  # DeepSeek
+  deepseek-v3: [deepseek, deepseek-v3]
+  deepseek-r1: [deepseek, deepseek-r1]
+
+  # Mistral
+  mistral-large: [mistral, mistral-large]
+  mistral-small: [mistral, mistral-small]
+  codestral:     [mistral, codestral]
+
+  # Groq
+  llama-70b:   [groq, llama-3.3-70b]
+  llama-8b:    [groq, llama-3.1-8b]
+  gemma2:      [groq, gemma2-9b]
+  mixtral:     [groq, mixtral-8x7b]
+
+  # OpenRouter-Fallbacks
+  qwen-max-fallback:    [openrouter, qwen-max-or]
+  deepseek-v3-fallback: [openrouter, deepseek-v3-or]
