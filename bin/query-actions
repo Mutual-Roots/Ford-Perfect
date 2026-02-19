@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+#
+# query-actions - Query and analyze Ford Perfect action logs
+#
+# SYNOPSIS
+#   query-actions [OPTIONS] [FILTER]
+#
+# DESCRIPTION
+#   Query the action log database with various filters and output formats.
+#
+
+set -euo pipefail
+
+LOG_FILE="/opt/ai-orchestrator/var/logs/actions.jsonl"
+
+show_help() {
+    cat <<EOF
+query-actions - Query Ford Perfect action logs
+
+USAGE:
+    query-actions [OPTIONS] [FILTER]
+
+OPTIONS:
+    --risk <level>      Filter by risk level (low|medium|high|critical)
+    --category <cat>    Filter by category
+    --from <date>       Show actions from date (YYYY-MM-DD)
+    --to <date>         Show actions until date (YYYY-MM-DD)
+    --today             Show today's actions only
+    --week              Show this week's actions
+    --costly            Show only actions with cost > 0
+    --search <term>     Search in what/why fields
+    --count             Show count only
+    --format <fmt>      Output format: json|markdown|table (default: table)
+    --limit <n>         Limit results (default: 50)
+    --help, -h          Show this help
+
+EXAMPLES:
+    query-actions --risk high
+    query-actions --today --format markdown
+    query-actions --costly --from 2026-02-01
+    query-actions --search "nginx" --limit 10
+EOF
+}
+
+# Parse arguments
+RISK_FILTER=""
+CATEGORY_FILTER=""
+FROM_DATE=""
+TO_DATE=""
+TODAY=false
+WEEK=false
+COSTLY=false
+SEARCH_TERM=""
+COUNT_ONLY=false
+FORMAT="table"
+LIMIT=50
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --risk)
+            RISK_FILTER="$2"
+            shift 2
+            ;;
+        --category)
+            CATEGORY_FILTER="$2"
+            shift 2
+            ;;
+        --from)
+            FROM_DATE="$2"
+            shift 2
+            ;;
+        --to)
+            TO_DATE="$2"
+            shift 2
+            ;;
+        --today)
+            TODAY=true
+            shift
+            ;;
+        --week)
+            WEEK=true
+            shift
+            ;;
+        --costly)
+            COSTLY=true
+            shift
+            ;;
+        --search)
+            SEARCH_TERM="$2"
+            shift 2
+            ;;
+        --count)
+            COUNT_ONLY=true
+            shift
+            ;;
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --limit)
+            LIMIT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# Check if log file exists
+if [[ ! -f "$LOG_FILE" ]]; then
+    echo "No action log found at $LOG_FILE"
+    exit 1
+fi
+
+# Build jq filter
+JQ_FILTER="."
+
+if [[ -n "$RISK_FILTER" ]]; then
+    JQ_FILTER="$JQ_FILTER | select(.risk == \"$RISK_FILTER\")"
+fi
+
+if [[ -n "$CATEGORY_FILTER" ]]; then
+    JQ_FILTER="$JQ_FILTER | select(.category == \"$CATEGORY_FILTER\")"
+fi
+
+if [[ "$COSTLY" == true ]]; then
+    JQ_FILTER="$JQ_FILTER | select(.cost != \"0\" and .cost != \"0 EUR\")"
+fi
+
+if [[ -n "$SEARCH_TERM" ]]; then
+    JQ_FILTER="$JQ_FILTER | select((.what + .why) | test(\"$SEARCH_TERM\"; \"i\"))"
+fi
+
+if [[ "$TODAY" == true ]]; then
+    TODAY_START=$(date -d "today 00:00:00" +"%Y-%m-%dT%H:%M:%SZ")
+    JQ_FILTER="$JQ_FILTER | select(.timestamp >= \"$TODAY_START\")"
+fi
+
+if [[ "$WEEK" == true ]]; then
+    WEEK_START=$(date -d "monday 00:00:00" +"%Y-%m-%dT%H:%M:%SZ")
+    JQ_FILTER="$JQ_FILTER | select(.timestamp >= \"$WEEK_START\")"
+fi
+
+if [[ -n "$FROM_DATE" ]]; then
+    JQ_FILTER="$JQ_FILTER | select(.timestamp >= \"${FROM_DATE}T00:00:00Z\")"
+fi
+
+if [[ -n "$TO_DATE" ]]; then
+    JQ_FILTER="$JQ_FILTER | select(.timestamp <= \"${TO_DATE}T23:59:59Z\")"
+fi
+
+# Execute query
+if [[ "$COUNT_ONLY" == true ]]; then
+    cat "$LOG_FILE" | jq -c "$JQ_FILTER" | wc -l
+else
+    case $FORMAT in
+        json)
+            cat "$LOG_FILE" | jq -c "$JQ_FILTER" | head -n "$LIMIT" | jq .
+            ;;
+        markdown)
+            echo "# Action Log Query Results"
+            echo ""
+            cat "$LOG_FILE" | jq -c "$JQ_FILTER" | head -n "$LIMIT" | while read -r line; do
+                timestamp=$(echo "$line" | jq -r '.timestamp_local')
+                what=$(echo "$line" | jq -r '.what')
+                risk=$(echo "$line" | jq -r '.risk')
+                why=$(echo "$line" | jq -r '.why')
+                cost=$(echo "$line" | jq -r '.cost')
+                
+                case $risk in
+                    low) emoji="🟢" ;;
+                    medium) emoji="🟡" ;;
+                    high) emoji="🔴" ;;
+                    critical) emoji="⚫" ;;
+                esac
+                
+                echo "### $emoji [$timestamp] $what"
+                echo ""
+                echo "**Why:** $why"
+                echo "**Risk:** $risk | **Cost:** $cost"
+                echo ""
+                echo "---"
+                echo ""
+            done
+            ;;
+        table|*)
+            printf "%-25s %-8s %-10s %-40s\n" "TIMESTAMP" "RISK" "COST" "WHAT"
+            printf "%s\n" "$(printf '=%.0s' {1..90})"
+            cat "$LOG_FILE" | jq -r "$JQ_FILTER | [.timestamp_local, .risk, .cost, .what] | @tsv" | \
+                head -n "$LIMIT" | \
+                while IFS=$'\t' read -r ts risk cost what; do
+                    printf "%-25s %-8s %-10s %.40s\n" "$ts" "$risk" "$cost" "$what"
+                done
+            ;;
+    esac
+fi

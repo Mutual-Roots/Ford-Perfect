@@ -1,0 +1,68 @@
+```markdown
+# AI Orchestrator
+
+## 概述
+
+AI Orchestrator 是一个用于管理和协调多个AI模型的开源工具。它旨在提供一个灵活且可扩展的平台，以支持各种AI应用的需求。
+
+## 主要特性
+
+- **多模型支持**: 支持多种AI模型的集成和管理。
+- **伪相关检测**: 高效的伪相关检测机制，确保数据质量。
+- **最小干预原则**: 设计遵循最小干预原则，减少对系统的影响。
+- **批判理性主义**: 基于批判理性主义的方法进行持续改进和优化。
+
+## 安装
+
+### 系统要求
+
+- Linux 发行版 (建议 Debian 或 Ubuntu)
+- Python 3.13
+- Git
+
+### 安装步骤
+
+1. 克隆仓库:
+   ```bash
+   git clone git@github.com:REPLACE_USERNAME/ford-perfect.git
+   ```
+
+2. 进入项目目录:
+   ```bash
+   cd ford-perfect
+   ```
+
+3. 安装依赖:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. 安装到 `/opt/ai-orchestrator/`:
+   ```bash
+   sudo make install
+   ```
+
+## 配置
+
+配置文件位于 `/opt/ai-orchestrator/config.yaml`。根据需要修改配置文件中的参数。
+
+## 主脑模型
+
+当前主脑模型为 `qwen3.5-plus`（新增于2026-02-15）。
+
+## FHS 合规性
+
+本项目严格遵守 Filesystem Hierarchy Standard (FHS)，所有文件和目录均放置在标准位置，以确保系统的整洁和一致性。
+
+## 使用
+
+详见 [文档](docs/usage.md)。
+
+## 贡献
+
+欢迎贡献代码和报告问题。请参阅 [贡献指南](CONTRIBUTING.md)。
+
+## 许可证
+
+本项目采用 MIT 许可证。详情见 [LICENSE](LICENSE) 文件。
+```

@@ -19,17 +19,32 @@ class Router:
     def classify(self, prompt: str, attachments: list = None) -> str:
         """Bestimmt Task-Typ anhand Prompt + Anhänge."""
         attachments = attachments or []
+        prompt_lower = prompt.lower()
 
         # 1. Anhang-basiert (zuverlässigster Indikator)
         exts = [a.rsplit(".", 1)[-1].lower() for a in attachments if "." in a]
         if "pdf" in exts:
             return "pdf_analysis"
         if any(e in exts for e in ("png", "jpg", "jpeg", "webp", "gif")):
-            return "image_analysis"
+            # Distinguish between general image analysis and specific tasks
+            if any(kw in prompt_lower for kw in ["ocr", "extract text", "text extraction", "lesen"]):
+                return "ocr"
+            elif any(kw in prompt_lower for kw in ["screenshot", "ui", "interface", "button", "menu"]):
+                return "screenshot_analysis"
+            elif any(kw in prompt_lower for kw in ["diagram", "chart", "graph", "flowchart"]):
+                return "diagram_analysis"
+            else:
+                return "image_analysis"
 
         # 1b. PDF/Bild im Prompt-Text erwähnt (ohne Anhang)
         if re.search(r'\bpdf\b', prompt, re.I):
             return "pdf_analysis"
+        
+        # Image-related keywords without attachment (might be referring to previous context)
+        if any(kw in prompt_lower for kw in ["screenshot", "screen shot", "bildschirmfoto"]):
+            return "screenshot_analysis"
+        if any(kw in prompt_lower for kw in ["ocr", "text extrahieren", "text aus bild"]):
+            return "ocr"
 
         # 2. Prompt-Länge als Hinweis auf Kontext
         if len(prompt) > 50000:

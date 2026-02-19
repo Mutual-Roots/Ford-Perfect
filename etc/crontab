@@ -1,0 +1,11 @@
+# AI Orchestrator - Cost Monitoring Cron Jobs
+# Install with: crontab /opt/ai-orchestrator/etc/crontab
+
+# Daily cost report at 23:00 UTC
+0 23 * * * /opt/ai-orchestrator/scripts/daily-cost-report.sh >> /opt/ai-orchestrator/var/logs/cron-cost-report.log 2>&1
+
+# Weekly summary every Monday at 23:30 UTC
+30 23 * * 1 /opt/ai-orchestrator/bin/qwen-usage-dashboard --period week --output /opt/ai-orchestrator/var/reports/weekly-summary-$(date +\%Y\%m\%d).html >> /opt/ai-orchestrator/var/logs/cron-weekly.log 2>&1
+
+# Budget check every 6 hours (for alerting)
+0 */6 * * * /opt/ai-orchestrator/bin/qwen-cost --budget --quiet > /opt/ai-orchestrator/var/cache/budget-status.txt 2>&1 || true

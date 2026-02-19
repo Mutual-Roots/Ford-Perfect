@@ -68,8 +68,24 @@ api_routing:
   # ── Web-Recherche bleibt bei Copilot (Bing-Integration) ──
   # web_research: kein Eintrag → fällt auf Web-Adapter zurück
 
-  # ── Bilder bleiben bei Web-Adaptern (multimodal) ─────────
-  # image_analysis: kein Eintrag → Web-Adapter
+  # ── Vision / Bildanalyse (Qwen-VL) ───────────────────────
+  image_analysis:
+    primary:  qwen-vl-flash   # Qwen3-VL-Flash für OCR, Screenshot-Analyse
+    fallback: qwen-vl-plus    # Höhere Genauigkeit wenn Flash fehlschlägt
+  
+  ocr:
+    primary:  qwen-vl-flash   # Optimiert für Textextraktion
+    fallback: qwen-vl-plus
+  
+  screenshot_analysis:
+    primary:  qwen-vl-flash   # UI-Elemente, Layout, Text
+    fallback: qwen-vl-plus
+  
+  diagram_analysis:
+    primary:  qwen-vl-plus    # Komplexere visuelle Reasoning-Aufgaben
+    fallback: qwen-vl-flash
+  
+  # ── Bildgenerierung bleibt bei Web-Adaptern ──────────────
   # image_generation: kein Eintrag → Web-Adapter
 
 # -----------------------------------------------------------
@@ -77,7 +93,6 @@ api_routing:
 # Verhindert dass API-Router diese übernimmt auch wenn Regeln definiert sind.
 # -----------------------------------------------------------
 web_only:
-  - pdf_analysis
-  - image_analysis
-  - image_generation
-  - long_context       # Gemini 1M-Kontext nicht via API replizierbar
+  - pdf_analysis           # Gemini 2M-Kontext noch nicht via API verfügbar
+  - image_generation       # DALL-E, Midjourney nur via Web
+  - long_context           # Gemini 1M-Kontext nicht via API replizierbar

@@ -1,118 +1,211 @@
-# Ford Perfect AI Orchestrator
+# Ford Perfect - Safety & Action Logging System
 
-Critical-rationalist AI orchestration — Popper 2.0 epistemology, cost-efficient multi-model routing.
+> **Augenhöhe**: Eye-level partnership between Simon and Ford  
+> **Motto**: Transparency enables autonomy
 
-## Architecture
+## 📦 What's Included
 
-**Primary Brain:** `qwen3.5-plus` via DashScope International (Singapore)  
-**Fallback:** `claude-sonnet-4-6` (emergency only, explicit calls)  
-**Free Tier:** Web adapters (Claude.ai, Gemini, Copilot, OpenAI) via shared Chromium profile
+This safety protocol system provides:
 
-### Cost Discipline
-- Qwen: ~$0.0007/1k input, $0.0028/1k output — use for all heavy work
-- Sonnet: $15/1M output — coordination only, €10/month cap
-- Web adapters: $0 (subscription-based) — autonomous orchestrator runs these without Sonnet in the loop
+1. **Action Logging Tool** (`log-action`) - Log all Ford actions with risk categorization
+2. **Query Tool** (`query-actions`) - Search, filter, and analyze action logs
+3. **Daily Summary** (`daily-summary`) - Automated transparency reports
+4. **Protocol Documentation** - Complete guidelines for autonomous operation
+5. **Integration Guides** - Hook into brain.ask(), git, cost tracking
 
-### Path Layout (FHS Compliant)
-```
-/opt/ai-orchestrator/     # Main installation
-├── bin/                  # CLI tools (qwen-code, qwen-task, health-check)
-├── lib/                  # Python modules (brain.py, adapters, router)
-├── etc/                  # Config (credentials.enc, providers.yaml, rules.yaml)
-├── var/                  # Runtime data (logs, chromium-profile, cache)
-└── skills/               # Agent headers (coding, research, philosophy)
-```
+## 🚀 Installation
 
-Why `/opt`? FHS §4.5: add-on application software, self-contained, non-interfering with distro packages.
-
-## Install (Debian 13, t640)
+All tools are pre-installed in `/opt/ai-orchestrator/`:
 
 ```bash
-# System deps
-sudo apt update && sudo apt install -y python3-pip python3-selenium chromium-driver systemd curl jq git
-
-# Clone repo
-cd /opt
-git clone git@github.com:USERNAME/ford-perfect.git ai-orchestrator
-chown -R $USER:$USER /opt/ai-orchestrator
-
-# Install Python deps
-pip3 install --break-system-packages dashscope openai requests pycryptodome
-
-# Setup credentials (encrypt your API keys)
-echo "YOUR_DASHSCOPE_KEY" | ./bin/cred-enc --provider dashscope-intl
-
-# Enable systemd service
-sudo cp ford-perfect.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable ford-perfect && sudo systemctl start ford-perfect
+/opt/ai-orchestrator/bin/log-action      # Main logging tool
+/opt/ai-orchestrator/bin/query-actions   # Query and analyze
+/opt/ai-orchestrator/bin/daily-summary   # Daily reports
 ```
 
-## CLI Tools
+## 📚 Documentation
 
-### qwen-code
-Coding agent using Qwen-Coder-Plus with coding header (assertions, type safety, Linux-standard).
+| Document | Purpose |
+|----------|---------|
+| [safety-protocols.md](safety-protocols.md) | Complete protocol specification |
+| [brain-integration.md](brain-integration.md) | Integration with existing tools |
+| [QUICK-REFERENCE.md](QUICK-REFERENCE.md) | Quick reference card |
+| [action-log.md](action-log.md) | Human-readable action log |
+
+## ⚡ Quick Start
+
+### Log Your First Action
 
 ```bash
-qwen-code "write a bash one-liner to count lines in a file"
-qwen-code -o script.py "write a python function to reverse a string"
-qwen-code -m qwen3.5-plus-2026-02-15 -t 4096 "refactor this module"
+/opt/ai-orchestrator/bin/log-action \
+    --what "Tested the logging system" \
+    --why "Verifying installation" \
+    --risk low \
+    --category test
 ```
 
-### qwen-task
-Task router with type-specific headers (coding/research/philosophy).
+### View Today's Actions
 
 ```bash
-qwen-task --type coding "implement binary search"
-qwen-task --type research "summarize latest LLM papers"
-qwen-task --type philosophy "analyze Popper falsification in AI context"
+/opt/ai-orchestrator/bin/query-actions --today
 ```
 
-### health-check
-Endpoint reachability + latency monitoring.
+### Get Help
 
 ```bash
-./bin/health-check
-# Tests: OpenRouter, DashScope-Intl, Anthropic, OpenAI
+/opt/ai-orchestrator/bin/log-action --help
 ```
 
-## Providers
+## 🎯 Risk Categories
 
-| Provider | Endpoint | Latency | Models | Cost |
-|----------|----------|---------|--------|------|
-| OpenRouter | openrouter.ai | ~140ms | 128+ Qwen/DeepSeek/Gemma | Free tier available |
-| DashScope-Intl | dashscope-intl.aliyuncs.com | ~660ms | qwen3.5-plus, qwen-max, qwen-coder | ~$0.001/call |
-| Anthropic | api.anthropic.com | ~200ms | claude-sonnet-4-6, claude-haiku-4-6 | $15/1M output |
+| Level | Approval | Example Actions |
+|-------|----------|-----------------|
+| 🟢 LOW | None | File edits, git commits, documentation |
+| 🟡 MEDIUM | None (notified) | API calls with cost, config changes |
+| 🔴 HIGH | 5-min window | System mods, credentials, external comms |
+| ⚫ CRITICAL | Explicit required | Deletion, financial, legal |
 
-**Never use DashScope mainland** — always `dashscope-intl` (Singapore).
+## 🛑 Emergency Commands
 
-## Web Adapters
+Simon can control Ford's autonomy via Telegram:
 
-Headless browser automation for subscription-based free access:
+- `FORD PAUSE` - Stop autonomous actions
+- `FORD RESUME` - Resume normal operation
+- `FORD STOP [reason]` - Halt current action immediately
+- `FORD FREEZE` - Full lockdown, manual recovery required
 
-- **Claude.ai**: Shared Chromium profile, 21 cookies saved
-- **Gemini**: Google One Advanced subscription
-- **Copilot**: GitHub Copilot subscription
-- **OpenAI**: ChatGPT Plus subscription
+## 📊 How It Works
 
-All share `/opt/ai-orchestrator/var/chromium-profile` with `--password-store=basic`.
+```
+┌─────────────────┐
+│  Ford Acts      │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  log-action     │ ← Logs to JSONL + Markdown
+└────────┬────────┘
+         │
+         ├──→ /var/logs/actions.jsonl (machine-readable)
+         ├──→ /docs/action-log.md (human-readable)
+         └──→ Telegram (HIGH/CRITICAL only)
+```
 
-## Testing
+## 🔧 Configuration
+
+Set environment variables for full functionality:
 
 ```bash
-# Test brain.py
-python3 lib/brain.py --test
-
-# Test web adapter
-python3 lib/adapters.py --adapter claude --test
-
-# Run full health check
-./bin/health-check --verbose
+export FORD_TELEGRAM_CHAT_ID="your_chat_id"      # For notifications
+export FORD_TELEGRAM_BOT_TOKEN="bot_token"       # For sending messages
+export FORD_SESSION_ID="unique_session"          # For log correlation
+export SIMON_TELEGRAM_ID="simon_chat_id"         # For emergency commands
 ```
 
-## License
+## 📋 Daily Workflow
 
-MIT License — see LICENSE file.
+**Ford (AI)**:
+1. Acts autonomously within risk boundaries
+2. Logs every action automatically
+3. Sends daily summary at 20:00
+4. Waits for HIGH/CRITICAL approval when needed
 
-## Mutual Roots
+**Simon (Human)**:
+1. Receives daily summary automatically
+2. Reviews weekly (Monday 9:00)
+3. Approves CRITICAL actions as they arise
+4. Can pause/stop anytime via emergency commands
 
-This project is part of Mutual Roots — open standards, reproducible paths, shared epistemic hygiene. No black boxes, no faith, only falsifiable interfaces.
+## 🔍 Query Examples
+
+```bash
+# What did Ford do today?
+query-actions --today
+
+# Show expensive API calls
+query-actions --costly --from 2026-02-01
+
+# Find all high-risk actions this week
+query-actions --week --risk high
+
+# Search for specific topic
+query-actions --search "firewall"
+
+# Count by risk level
+query-actions --count --risk critical
+```
+
+## 🎓 Philosophy
+
+This system is built on three core principles:
+
+1. **Mutual Roots Partnership**: Ford is a partner, not a servant
+2. **Popper 2.0 Critical Rationalism**: All decisions are falsifiable and reviewable
+3. **Wolfwolken Symbiosis**: Organic growth through feedback, not rigid control
+
+## 📈 Metrics & Review
+
+### Daily
+- Automatic summary sent to Simon at 20:00
+- Includes count by risk level and total costs
+
+### Weekly
+- Simon reviews all HIGH/CRITICAL actions
+- Adjust protocols if needed
+- ~15 minutes expected time commitment
+
+### Monthly
+- Full cost analysis
+- Pattern recognition
+- Protocol evolution discussion
+
+## 🛠️ Troubleshooting
+
+### Logs not appearing?
+Check that `/opt/ai-orchestrator/var/logs/` exists and is writable:
+```bash
+ls -la /opt/ai-orchestrator/var/logs/
+```
+
+### Telegram notifications not working?
+Verify environment variables:
+```bash
+echo $FORD_TELEGRAM_CHAT_ID
+echo $FORD_TELEGRAM_BOT_TOKEN
+```
+
+### Need to edit a log entry?
+Logs are append-only by design. Add a correction entry:
+```bash
+log-action --what "Correction to previous entry" \
+           --why "Fixed incorrect cost value" \
+           --risk low \
+           --category correction
+```
+
+## 🤝 Contributing
+
+This system evolves through use. Suggestions for improvement:
+
+1. Log the suggestion as a MEDIUM risk action
+2. Discuss with Simon during weekly review
+3. Update protocols if agreed
+4. Document the change in this README
+
+## 📞 Support
+
+For questions or issues:
+
+1. Check [QUICK-REFERENCE.md](QUICK-REFERENCE.md)
+2. Review [safety-protocols.md](safety-protocols.md)
+3. Ask Ford directly (meta!)
+4. Emergency: Use `FORD PAUSE` and discuss
+
+---
+
+**Remember**: This system exists to build trust through transparency.  
+The goal is **more autonomy over time**, not less.
+
+*Version: 1.0*  
+*Created: 2026-02-19*  
+*Next Review: 2026-02-26*

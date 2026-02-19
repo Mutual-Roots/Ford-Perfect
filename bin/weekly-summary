@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+#
+# weekly-summary - Generate weekly action summary for Simon's review
+#
+# SYNOPSIS
+#   weekly-summary [--week YYYY-Www] [--format markdown|text] [--send]
+#
+
+set -euo pipefail
+
+LOG_FILE="/opt/ai-orchestrator/var/logs/actions.jsonl"
+TELEGRAM_CHAT_ID="${FORD_TELEGRAM_CHAT_ID:-}"
+
+# Get current week (ISO week format)
+YEAR=$(date +%G)
+WEEK=$(date +%V)
+FORMAT="markdown"
+SEND=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --week)
+            # Parse YYYY-Www format
+            YEAR=$(echo "$2" | cut -d'-' -f1)
+            WEEK=$(echo "$2" | cut -d'W' -f2)
+            shift 2
+            ;;
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --send)
+            SEND=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "$LOG_FILE" ]]; then
+    echo "No action log found at $LOG_FILE"
+    exit 1
+fi
+
+# Calculate week start and end dates
+# Get Monday of the current week (or last week if we're before Monday)
+DAY_OF_WEEK=$(date +%u)  # 1=Monday, 7=Sunday
+DAYS_SINCE_MONDAY=$((DAY_OF_WEEK - 1))
+
+WEEK_START_DATE=$(date -d "$DAYS_SINCE_MONDAY days ago" +"%Y-%m-%d")
+WEEK_END_DATE=$(date -d "+$((6 - DAYS_SINCE_MONDAY)) days" +"%Y-%m-%d")
+
+WEEK_START="${WEEK_START_DATE}T00:00:00Z"
+WEEK_END="${WEEK_END_DATE}T23:59:59Z"
+WEEK_READABLE="$WEEK_START_DATE to $WEEK_END_DATE"
+
+# Count by risk level
+COUNT_LOW=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\" and .risk == \"low\")" "$LOG_FILE" | wc -l)
+COUNT_MEDIUM=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\" and .risk == \"medium\")" "$LOG_FILE" | wc -l)
+COUNT_HIGH=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\" and .risk == \"high\")" "$LOG_FILE" | wc -l)
+COUNT_CRITICAL=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\" and .risk == \"critical\")" "$LOG_FILE" | wc -l)
+TOTAL=$((COUNT_LOW + COUNT_MEDIUM + COUNT_HIGH + COUNT_CRITICAL))
+
+# Calculate total cost
+TOTAL_COST=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\")" "$LOG_FILE" | \
+    jq -r '.cost' 2>/dev/null | grep -oE '[0-9]+\.?[0-9]*' | awk '{sum+=$1} END {print sum+0}')
+
+# Count unique categories
+CATEGORIES=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\") | .category" "$LOG_FILE" 2>/dev/null | sort -u | wc -l)
+
+# Get high/critical actions for review
+HIGH_ACTIONS=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\" and (.risk == \"high\" or .risk == \"critical\"))" "$LOG_FILE" 2>/dev/null || echo "")
+
+# Cost breakdown by category
+COST_BREAKDOWN=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\") | 
+                      select(.cost != \"0\" and .cost != \"0 EUR\") |
+                      \"\(.category)\t\(.cost)\"" "$LOG_FILE" 2>/dev/null | \
+    awk -F'\t' '{costs[$1]+=$2} END {for (c in costs) printf "%-25s %.2f EUR\n", c, costs[c]}' | \
+    sort -k2 -rn || echo "No costs recorded")
+
+# Most common actions (by what field)
+TOP_ACTIONS=$(jq -r "select(.timestamp >= \"$WEEK_START\" and .timestamp <= \"$WEEK_END\") | .what" "$LOG_FILE" 2>/dev/null | \
+    sort | uniq -c | sort -rn | head -5 || echo "No data")
+
+if [[ "$FORMAT" == "markdown" ]]; then
+    cat <<EOF
+# 📊 Weekly Review - Week $WEEK/$YEAR
+
+**Period:** $WEEK_READABLE  
+**Total Actions:** $TOTAL
+
+## Summary
+
+| Risk Level | Count | Percentage |
+|------------|-------|------------|
+| 🟢 LOW | $COUNT_LOW | $(awk "BEGIN {printf \"%.1f\", ($COUNT_LOW/$TOTAL)*100}")% |
+| 🟡 MEDIUM | $COUNT_MEDIUM | $(awk "BEGIN {printf \"%.1f\", ($COUNT_MEDIUM/$TOTAL)*100}")% |
+| 🔴 HIGH | $COUNT_HIGH | $(awk "BEGIN {printf \"%.1f\", ($COUNT_HIGH/$TOTAL)*100}")% |
+| ⚫ CRITICAL | $COUNT_CRITICAL | $(awk "BEGIN {printf \"%.1f\", ($COUNT_CRITICAL/$TOTAL)*100}")% |
+
+## 💰 Costs
+
+**Total API Expenses:** ${TOTAL_COST} EUR
+
+### By Category
+\`\`\`
+$COST_BREAKDOWN
+\`\`\`
+
+## 🔍 High-Risk Actions Requiring Review
+
+EOF
+
+    if [[ -n "$HIGH_ACTIONS" ]]; then
+        echo "$HIGH_ACTIONS" | jq -r '"### [\(.timestamp_local)] \(.what)\n\n**Why:** \(.why)\n**Risk:** \(.risk)\n**Outcome:** \(.outcome)\n**Rollback:** \(.rollback)\n"'
+    else
+        echo "*No high-risk actions this week* ✅"
+    fi
+
+    cat <<EOF
+
+## 📈 Top Action Types
+
+\`\`\`
+$TOP_ACTIONS
+\`\`\`
+
+## ✅ Review Checklist
+
+- [ ] Scan all HIGH/CRITICAL actions above
+- [ ] Review total costs vs. budget
+- [ ] Check for any failed rollbacks
+- [ ] Identify actions that should be re-categorized
+- [ ] Note any communication gaps
+- [ ] Update protocols if needed
+
+## 📝 Notes for Ford
+
+_Add your feedback here_
+
+---
+*Generated: $(date +"%Y-%m-%d %H:%M:%S")*
+EOF
+
+else
+    # Plain text format
+    cat <<EOF
+WEEKLY REVIEW - Week $WEEK/$YEAR
+================================
+
+Period: $WEEK_READABLE
+Total Actions: $TOTAL
+
+SUMMARY
+-------
+LOW:       $COUNT_LOW
+MEDIUM:    $COUNT_MEDIUM
+HIGH:      $COUNT_HIGH
+CRITICAL:  $COUNT_CRITICAL
+
+COSTS
+-----
+Total: ${TOTAL_COST} EUR
+
+HIGH-RISK ACTIONS
+-----------------
+EOF
+    if [[ -n "$HIGH_ACTIONS" ]]; then
+        echo "$HIGH_ACTIONS" | jq -r '"[\(.timestamp_local)] \(.what)\n  Why: \(.why)\n  Risk: \(.risk)\n"'
+    else
+        echo "None"
+    fi
+fi
+
+# Send via Telegram if requested
+if [[ "$SEND" == true && -n "$TELEGRAM_CHAT_ID" ]]; then
+    SUMMARY_MESSAGE=$(cat <<EOF
+📊 Weekly Review Ready - Week $WEEK/$YEAR
+
+Actions: $TOTAL total
+• 🟢 LOW: $COUNT_LOW
+• 🟡 MEDIUM: $COUNT_MEDIUM  
+• 🔴 HIGH: $COUNT_HIGH
+• ⚫ CRITICAL: $COUNT_CRITICAL
+
+Costs: ${TOTAL_COST} EUR
+
+Full report sent via email/file.
+Review checklist: See /opt/ai-orchestrator/docs/weekly-review.md
+EOF
+)
+    
+    if command -v telegram-send &> /dev/null; then
+        telegram-send "$SUMMARY_MESSAGE" 2>/dev/null || true
+    elif [[ -n "${FORD_TELEGRAM_BOT_TOKEN:-}" ]]; then
+        curl -s -X POST "https://api.telegram.org/bot${FORD_TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=$TELEGRAM_CHAT_ID" \
+            -d "text=$SUMMARY_MESSAGE" > /dev/null || true
+    fi
+fi

@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+Describe Image — Generate captions/descriptions for images using Qwen-VL
+
+Usage:
+    describe-image <image_path> [options]
+    describe-image /path/to/dir/ --batch
+
+Options:
+    --detail <level>  Detail level: brief (default), detailed, verbose
+    --model <name>    Qwen-VL model (default: qwen3-vl-flash)
+    --json            Output as JSON
+    --batch           Process all images in directory
+    --tags            Output comma-separated tags instead of description
+    --focus <area>    Focus on specific aspect (objects, text, colors, layout)
+
+Supported formats: PNG, JPG, JPEG, WebP, GIF, BMP
+Max size: 20MB per image
+
+Examples:
+    describe-image photo.jpg
+    describe-image screenshot.png --detail detailed --json
+    describe-image ./images/ --batch --tags
+"""
+
+import sys
+import os
+import json
+import base64
+import urllib.request
+import urllib.error
+from pathlib import Path
+from typing import Union, List
+
+sys.path.insert(0, '/opt/ai-orchestrator/lib')
+
+DASHSCOPE_KEY = os.environ.get("DASHSCOPE_INTL_API_KEY", "")
+VL_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+DEFAULT_MODEL = "qwen3-vl-flash"
+
+
+def encode_image(image_path: Union[str, Path]) -> str:
+    """Encode image to base64 data URL."""
+    path = Path(image_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    
+    ext = path.suffix.lower()
+    mime_map = {
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
+    }
+    mime_type = mime_map.get(ext, 'image/png')
+    
+    with open(path, 'rb') as f:
+        data = base64.b64encode(f.read()).decode('utf-8')
+    
+    return f"data:{mime_type};base64,{data}"
+
+
+def describe_image(
+    image_input: Union[str, Path],
+    detail: str = "brief",
+    model: str = DEFAULT_MODEL,
+    focus: str = None,
+    tags_only: bool = False,
+) -> dict:
+    """
+    Generate description for image.
+    
+    Args:
+        image_input: File path or URL
+        detail: brief, detailed, or verbose
+        model: Qwen-VL model
+        focus: Specific aspect to focus on
+        tags_only: If True, output comma-separated tags
+    
+    Returns:
+        Dict with description, usage, latency_ms
+    """
+    if not DASHSCOPE_KEY:
+        raise EnvironmentError("DASHSCOPE_INTL_API_KEY not set")
+    
+    # Prepare image content
+    if isinstance(image_input, (str, Path)) and Path(image_input).exists():
+        data_url = encode_image(image_input)
+    elif isinstance(image_input, str) and image_input.startswith("http"):
+        data_url = image_input
+    else:
+        raise ValueError(f"Invalid image input: {image_input}")
+    
+    # Build prompt based on options
+    if tags_only:
+        prompt = (
+            "Analyze this image and output ONLY a comma-separated list of tags. "
+            "Include: main objects, colors, style, mood, setting. "
+            "Example: cat, orange tabby, sleeping, sofa, sunlight, cozy, indoor"
+        )
+    else:
+        if detail == "brief":
+            prompt = "Describe this image briefly in 1-2 sentences. What do you see?"
+        elif detail == "detailed":
+            prompt = (
+                "Provide a detailed description including: "
+                "main subjects, actions, colors, lighting, composition, "
+                "any visible text, context/setting, and notable details."
+            )
+        else:  # verbose
+            prompt = (
+                "Provide an exhaustive description of this image. Cover: "
+                "1. Main subjects and their appearance\n"
+                "2. Actions and interactions\n"
+                "3. Colors, lighting, atmosphere\n"
+                "4. Composition and layout\n"
+                "5. Background and context\n"
+                "6. Any text visible\n"
+                "7. Mood and style\n"
+                "8. Any anomalies or interesting details"
+            )
+        
+        if focus:
+            prompt += f"\n\nFocus specifically on: {focus}."
+    
+    # Prepare request
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an image analysis assistant. Be accurate and descriptive."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": prompt}
+                ]
+            }
+        ],
+        "max_tokens": 2000 if detail == "brief" else 3000
+    }
+    
+    # Make request
+    req = urllib.request.Request(
+        VL_BASE,
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            "Authorization": f"Bearer {DASHSCOPE_KEY}",
+            "Content-Type": "application/json"
+        }
+    )
+    
+    import time
+    t0 = time.time()
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            response_data = json.loads(resp.read().decode('utf-8'))
+        
+        latency_ms = int((time.time() - t0) * 1000)
+        text = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        usage = response_data.get("usage", {})
+        
+        return {
+            "description": text.strip(),
+            "model": response_data.get("model", model),
+            "usage": usage,
+            "latency_ms": latency_ms,
+            "source": str(image_input),
+            "detail_level": detail,
+            "focus": focus,
+        }
+        
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8') if e.fp else ""
+        raise RuntimeError(f"API error {e.code}: {error_body[:500]}")
+
+
+def find_images(directory: Union[str, Path]) -> List[Path]:
+    """Find all image files in directory."""
+    dir_path = Path(directory)
+    if not dir_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {directory}")
+    
+    extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'}
+    images = []
+    
+    for ext in extensions:
+        images.extend(dir_path.glob(f"*{ext}"))
+        images.extend(dir_path.glob(f"*{ext.upper()}"))
+    
+    return sorted(images)
+
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Generate descriptions for images using Qwen-VL",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    
+    parser.add_argument("input", nargs="?", help="Image file path or directory (with --batch)")
+    parser.add_argument("--detail", default="brief", 
+                       choices=["brief", "detailed", "verbose"],
+                       help="Detail level (default: brief)")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model (default: {DEFAULT_MODEL})")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--batch", action="store_true", help="Process directory of images")
+    parser.add_argument("--tags", action="store_true", help="Output tags instead of description")
+    parser.add_argument("--focus", help="Focus on specific aspect")
+    
+    args = parser.parse_args()
+    
+    if not args.input:
+        print("Error: Missing image path", file=sys.stderr)
+        sys.exit(1)
+    
+    input_path = Path(args.input)
+    
+    if args.batch:
+        # Batch mode
+        if not input_path.is_dir():
+            print(f"Error: {args.input} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        
+        images = find_images(input_path)
+        if not images:
+            print(f"No images found in {args.input}", file=sys.stderr)
+            sys.exit(1)
+        
+        results = []
+        for i, img_path in enumerate(images, 1):
+            print(f"[{i}/{len(images)}] Processing: {img_path.name}", file=sys.stderr)
+            try:
+                result = describe_image(
+                    img_path,
+                    detail=args.detail,
+                    model=args.model,
+                    focus=args.focus,
+                    tags_only=args.tags
+                )
+                results.append(result)
+                
+                if not args.json:
+                    print(f"\n--- {img_path.name} ---", file=sys.stderr)
+                    print(result["description"])
+                    
+            except Exception as e:
+                error_result = {
+                    "source": str(img_path),
+                    "error": str(e)
+                }
+                results.append(error_result)
+                print(f"Error: {e}", file=sys.stderr)
+        
+        if args.json:
+            print(json.dumps(results, ensure_ascii=False, indent=2))
+    
+    else:
+        # Single image mode
+        if not input_path.exists():
+            print(f"Error: File not found: {args.input}", file=sys.stderr)
+            sys.exit(1)
+        
+        try:
+            result = describe_image(
+                input_path,
+                detail=args.detail,
+                model=args.model,
+                focus=args.focus,
+                tags_only=args.tags
+            )
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(result["description"])
+
+
+if __name__ == "__main__":
+    main()

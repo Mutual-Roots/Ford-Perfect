@@ -26,10 +26,10 @@ services:
     enabled: true
 
   openai:
-    url: "https://chat.openai.com"
+    url: "https://chatgpt.com"
     session_file: "var/sessions/openai.pkl"
     daily_limit: 80
-    enabled: false   # bis Abo steht
+    enabled: true   # Google OAuth Session vorhanden
 
 selectors:
   claude:
@@ -37,8 +37,8 @@ selectors:
     response: '.font-claude-response-body'
     login_check: '[href="/login"]'
   gemini:
-    editor: 'textarea.text-input-field, div[contenteditable="true"][aria-label*="prompt"]'
-    response: 'ms-cmark-node, .model-response-text, message-content'
+    editor: 'textarea[aria-label="Enter a prompt"], textarea.text-input-field, div[contenteditable="true"][aria-label*="prompt"]'
+    response: 'ms-cmark-node, .model-response-text, message-content, ms-chat-turn'
     login_check: 'a[href*="accounts.google.com/signin"]'
   copilot:
     editor: 'textarea[placeholder*="Ask"], #userInput, div[contenteditable="true"][role="textbox"]'

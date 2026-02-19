@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""
+Analyze Screenshot — Specialized UI screenshot analysis using Qwen-VL
+
+Extracts text, detects UI elements, analyzes layout from screenshots.
+
+Usage:
+    analyze-screenshot <image_path> [options]
+    analyze-screenshot /path/to/dir/ --batch
+
+Options:
+    --focus <area>    Focus: text (default), elements, layout, all
+    --model <name>    Qwen-VL model (default: qwen3-vl-flash)
+    --json            Output as structured JSON
+    --batch           Process directory of screenshots
+    --text-only       Output only extracted text
+    --elements-only   Output only UI elements list
+    --simple          Simple mode: just summary
+
+Supported formats: PNG, JPG, JPEG, WebP, GIF, BMP
+Max size: 20MB per image
+
+Examples:
+    analyze-screenshot app-ui.png
+    analyze-screenshot screenshot.png --json
+    analyze-screenshot ./screenshots/ --batch --text-only
+"""
+
+import sys
+import os
+import json
+import base64
+import urllib.request
+import urllib.error
+from pathlib import Path
+from typing import Union, List, Dict, Any
+
+sys.path.insert(0, '/opt/ai-orchestrator/lib')
+
+DASHSCOPE_KEY = os.environ.get("DASHSCOPE_INTL_API_KEY", "")
+VL_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+DEFAULT_MODEL = "qwen3-vl-flash"
+
+
+def encode_image(image_path: Union[str, Path]) -> str:
+    """Encode image to base64 data URL."""
+    path = Path(image_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    
+    ext = path.suffix.lower()
+    mime_map = {
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
+    }
+    mime_type = mime_map.get(ext, 'image/png')
+    
+    with open(path, 'rb') as f:
+        data = base64.b64encode(f.read()).decode('utf-8')
+    
+    return f"data:{mime_type};base64,{data}"
+
+
+def analyze_screenshot(
+    image_input: Union[str, Path],
+    focus: str = "all",
+    model: str = DEFAULT_MODEL,
+) -> Dict[str, Any]:
+    """
+    Analyze UI screenshot.
+    
+    Args:
+        image_input: File path or URL
+        focus: text, elements, layout, or all
+        model: Qwen-VL model
+    
+    Returns:
+        Dict with extracted_text, ui_elements, layout, summary
+    """
+    if not DASHSCOPE_KEY:
+        raise EnvironmentError("DASHSCOPE_INTL_API_KEY not set")
+    
+    # Prepare image content
+    if isinstance(image_input, (str, Path)) and Path(image_input).exists():
+        data_url = encode_image(image_input)
+    elif isinstance(image_input, str) and image_input.startswith("http"):
+        data_url = image_input
+    else:
+        raise ValueError(f"Invalid image input: {image_input}")
+    
+    # Build prompt based on focus
+    if focus == "text":
+        prompt = (
+            "Extract ALL visible text from this screenshot verbatim. "
+            "Preserve line breaks, spacing, and formatting exactly. "
+            "Include button labels, menu items, status text, error messages, etc. "
+            "Output ONLY the extracted text, no commentary."
+        )
+    elif focus == "elements":
+        prompt = (
+            "Identify all UI elements in this screenshot. List them by category:\n"
+            "- BUTTONS: All clickable buttons\n"
+            "- INPUTS: Text fields, search boxes, forms\n"
+            "- MENUS: Navigation menus, dropdowns\n"
+            "- LABELS: Text labels, headings\n"
+            "- ICONS: Icons and their apparent meaning\n"
+            "- STATUS: Status indicators, badges, notifications\n"
+            "Format as a structured list."
+        )
+    elif focus == "layout":
+        prompt = (
+            "Analyze the layout and structure of this UI screenshot:\n"
+            "- Overall structure (header, sidebar, main content, footer)\n"
+            "- Grid/flexbox layout patterns\n"
+            "- Visual hierarchy\n"
+            "- Spacing and alignment\n"
+            "- Color scheme\n"
+            "Describe systematically."
+        )
+    else:  # all
+        prompt = (
+            "Analyze this UI screenshot comprehensively. Structure your response as:\n\n"
+            "=== EXTRACTED_TEXT ===\n"
+            "[All visible text verbatim, preserve formatting]\n\n"
+            "=== UI_ELEMENTS ===\n"
+            "[List detected elements: buttons, inputs, menus, icons, etc.]\n\n"
+            "=== LAYOUT ===\n"
+            "[Describe layout structure, sections, visual hierarchy]\n\n"
+            "=== SUMMARY ===\n"
+            "[One-sentence summary of what this UI shows]"
+        )
+    
+    # Prepare request
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a UI analysis expert. Be precise and systematic."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": prompt}
+                ]
+            }
+        ],
+        "max_tokens": 4000
+    }
+    
+    # Make request
+    req = urllib.request.Request(
+        VL_BASE,
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            "Authorization": f"Bearer {DASHSCOPE_KEY}",
+            "Content-Type": "application/json"
+        }
+    )
+    
+    import time
+    t0 = time.time()
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            response_data = json.loads(resp.read().decode('utf-8'))
+        
+        latency_ms = int((time.time() - t0) * 1000)
+        raw_text = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        usage = response_data.get("usage", {})
+        
+        # Parse structured response
+        result = parse_screenshot_analysis(raw_text, focus)
+        result.update({
+            "model": response_data.get("model", model),
+            "usage": usage,
+            "latency_ms": latency_ms,
+            "source": str(image_input),
+            "raw_response": raw_text,
+        })
+        
+        return result
+        
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8') if e.fp else ""
+        raise RuntimeError(f"API error {e.code}: {error_body[:500]}")
+
+
+def parse_screenshot_analysis(raw_text: str, focus: str) -> Dict[str, Any]:
+    """Parse structured screenshot analysis response."""
+    result = {
+        "extracted_text": "",
+        "ui_elements": [],
+        "layout": "",
+        "summary": "",
+    }
+    
+    if focus == "text":
+        result["extracted_text"] = raw_text.strip()
+        return result
+    
+    if focus == "elements":
+        result["ui_elements"] = raw_text.strip()
+        return result
+    
+    if focus == "layout":
+        result["layout"] = raw_text.strip()
+        return result
+    
+    # Parse comprehensive response
+    sections = raw_text.split("\n\n")
+    current_section = None
+    current_content = []
+    
+    for section in sections:
+        section_upper = section.upper()
+        
+        if "=== EXTRACTED_TEXT ===" in section_upper or "EXTRACTED_TEXT:" in section_upper:
+            if current_section:
+                result[current_section] = "\n".join(current_content).strip()
+            current_section = "extracted_text"
+            current_content = []
+        elif "=== UI_ELEMENTS ===" in section_upper or "UI_ELEMENTS:" in section_upper:
+            if current_section:
+                result[current_section] = "\n".join(current_content).strip()
+            current_section = "ui_elements"
+            current_content = []
+        elif "=== LAYOUT ===" in section_upper or "LAYOUT:" in section_upper:
+            if current_section:
+                result[current_section] = "\n".join(current_content).strip()
+            current_section = "layout"
+            current_content = []
+        elif "=== SUMMARY ===" in section_upper or "SUMMARY:" in section_upper:
+            if current_section:
+                result[current_section] = "\n".join(current_content).strip()
+            current_section = "summary"
+            current_content = []
+        else:
+            current_content.append(section)
+    
+    # Save last section
+    if current_section and current_content:
+        result[current_section] = "\n".join(current_content).strip()
+    
+    # If parsing failed, put everything in extracted_text
+    if not any(result.values()):
+        result["extracted_text"] = raw_text.strip()
+    
+    return result
+
+
+def find_images(directory: Union[str, Path]) -> List[Path]:
+    """Find all image files in directory."""
+    dir_path = Path(directory)
+    if not dir_path.is_dir():
+        raise NotADirectoryError(f"Not a directory: {directory}")
+    
+    extensions = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'}
+    images = []
+    
+    for ext in extensions:
+        images.extend(dir_path.glob(f"*{ext}"))
+        images.extend(dir_path.glob(f"*{ext.upper()}"))
+    
+    return sorted(images)
+
+
+def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Analyze UI screenshots using Qwen-VL",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    
+    parser.add_argument("input", nargs="?", help="Screenshot file path or directory (with --batch)")
+    parser.add_argument("--focus", default="all",
+                       choices=["text", "elements", "layout", "all"],
+                       help="Analysis focus (default: all)")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model (default: {DEFAULT_MODEL})")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--batch", action="store_true", help="Process directory")
+    parser.add_argument("--text-only", action="store_true", help="Output only extracted text")
+    parser.add_argument("--elements-only", action="store_true", help="Output only UI elements")
+    parser.add_argument("--simple", action="store_true", help="Simple mode: just summary")
+    
+    args = parser.parse_args()
+    
+    # Adjust focus based on output options
+    if args.text_only:
+        args.focus = "text"
+    elif args.elements_only:
+        args.focus = "elements"
+    elif args.simple:
+        args.focus = "all"  # Will extract summary from full analysis
+    
+    if not args.input:
+        print("Error: Missing image path", file=sys.stderr)
+        sys.exit(1)
+    
+    input_path = Path(args.input)
+    
+    if args.batch:
+        # Batch mode
+        if not input_path.is_dir():
+            print(f"Error: {args.input} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        
+        images = find_images(input_path)
+        if not images:
+            print(f"No images found in {args.input}", file=sys.stderr)
+            sys.exit(1)
+        
+        results = []
+        for i, img_path in enumerate(images, 1):
+            print(f"[{i}/{len(images)}] Processing: {img_path.name}", file=sys.stderr)
+            try:
+                result = analyze_screenshot(img_path, focus=args.focus, model=args.model)
+                
+                # Filter output based on options
+                if args.simple:
+                    output_result = {
+                        "source": str(img_path),
+                        "summary": result.get("summary", ""),
+                    }
+                elif args.text_only:
+                    output_result = {
+                        "source": str(img_path),
+                        "extracted_text": result.get("extracted_text", ""),
+                    }
+                elif args.elements_only:
+                    output_result = {
+                        "source": str(img_path),
+                        "ui_elements": result.get("ui_elements", ""),
+                    }
+                else:
+                    output_result = result
+                
+                results.append(output_result)
+                
+                if not args.json:
+                    print(f"\n--- {img_path.name} ---", file=sys.stderr)
+                    if args.simple:
+                        print(result.get("summary", ""))
+                    elif args.text_only:
+                        print(result.get("extracted_text", ""))
+                    elif args.elements_only:
+                        print(result.get("ui_elements", ""))
+                    else:
+                        print(result.get("raw_response", ""))
+                    
+            except Exception as e:
+                error_result = {
+                    "source": str(img_path),
+                    "error": str(e)
+                }
+                results.append(error_result)
+                print(f"Error: {e}", file=sys.stderr)
+        
+        if args.json:
+            print(json.dumps(results, ensure_ascii=False, indent=2))
+    
+    else:
+        # Single image mode
+        if not input_path.exists():
+            print(f"Error: File not found: {args.input}", file=sys.stderr)
+            sys.exit(1)
+        
+        try:
+            result = analyze_screenshot(input_path, focus=args.focus, model=args.model)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        
+        # Filter output
+        if args.simple:
+            output_result = result.get("summary", "")
+        elif args.text_only:
+            output_result = result.get("extracted_text", "")
+        elif args.elements_only:
+            output_result = result.get("ui_elements", "")
+        elif args.json:
+            output_result = result
+        else:
+            output_result = result.get("raw_response", "")
+        
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(output_result)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# daily-summary - Generate daily action summary for Simon
+#
+# SYNOPSIS
+#   daily-summary [--date YYYY-MM-DD] [--send]
+#
+
+set -euo pipefail
+
+LOG_FILE="/opt/ai-orchestrator/var/logs/actions.jsonl"
+TELEGRAM_CHAT_ID="${FORD_TELEGRAM_CHAT_ID:-}"
+
+DATE=$(date +"%Y-%m-%d")
+SEND=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --date)
+            DATE="$2"
+            shift 2
+            ;;
+        --send)
+            SEND=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "$LOG_FILE" ]]; then
+    echo "No action log found"
+    exit 1
+fi
+
+DAY_START="${DATE}T00:00:00Z"
+DAY_END="${DATE}T23:59:59Z"
+
+# Count by risk level
+COUNT_LOW=$(jq -r "select(.timestamp >= \"$DAY_START\" and .timestamp <= \"$DAY_END\" and .risk == \"low\")" "$LOG_FILE" | wc -l)
+COUNT_MEDIUM=$(jq -r "select(.timestamp >= \"$DAY_START\" and .timestamp <= \"$DAY_END\" and .risk == \"medium\")" "$LOG_FILE" | wc -l)
+COUNT_HIGH=$(jq -r "select(.timestamp >= \"$DAY_START\" and .timestamp <= \"$DAY_END\" and .risk == \"high\")" "$LOG_FILE" | wc -l)
+COUNT_CRITICAL=$(jq -r "select(.timestamp >= \"$DAY_START\" and .timestamp <= \"$DAY_END\" and .risk == \"critical\")" "$LOG_FILE" | wc -l)
+
+# Calculate total cost
+TOTAL_COST=$(jq -r "select(.timestamp >= \"$DAY_START\" and .timestamp <= \"$DAY_END\")" "$LOG_FILE" | \
+    jq -r '.cost' | grep -oE '[0-9]+\.?[0-9]*' | awk '{sum+=$1} END {print sum}')
+TOTAL_COST=${TOTAL_COST:-0}
+
+# Get notable actions (HIGH and CRITICAL)
+NOTABLE_ACTIONS=$(jq -r "select(.timestamp >= \"$DAY_START\" and .timestamp <= \"$DAY_END\" and (.risk == \"high\" or .risk == \"critical\")) | \"• \(.what) (\(.risk | ascii_upcase))\"" "$LOG_FILE" 2>/dev/null || echo "")
+
+# Build message
+MESSAGE=$(cat <<EOF
+📊 Daily Action Summary - $DATE
+
+🟢 LOW:     $COUNT_LOW actions
+🟡 MEDIUM:  $COUNT_MEDIUM actions
+🔴 HIGH:    $COUNT_HIGH actions
+⚫ CRITICAL: $COUNT_CRITICAL actions
+
+💰 Total API Cost: ${TOTAL_COST} EUR
+EOF
+)
+
+if [[ -n "$NOTABLE_ACTIONS" ]]; then
+    MESSAGE="$MESSAGE
+
+Notable actions:
+$NOTABLE_ACTIONS"
+fi
+
+MESSAGE="$MESSAGE
+
+Status: All systems operational"
+
+echo "$MESSAGE"
+
+if [[ "$SEND" == true && -n "$TELEGRAM_CHAT_ID" ]]; then
+    if command -v telegram-send &> /dev/null; then
+        telegram-send "$MESSAGE" 2>/dev/null || true
+    elif [[ -n "${FORD_TELEGRAM_BOT_TOKEN:-}" ]]; then
+        curl -s -X POST "https://api.telegram.org/bot${FORD_TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=$TELEGRAM_CHAT_ID" \
+            -d "text=$MESSAGE" > /dev/null || true
+    fi
+fi

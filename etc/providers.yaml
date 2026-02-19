@@ -95,6 +95,28 @@ providers:
         price_output_per_1m: 0.20
         supports_system: true
         tier: "balanced"
+      
+      # Vision-Language models (Qwen-VL)
+      qwen3-vl-flash:
+        model_id: "qwen3-vl-flash"
+        context_tokens: 32768
+        max_output_tokens: 4096
+        price_input_per_1m: 0.50            # Approximate, per Alibaba Cloud docs
+        price_output_per_1m: 1.50
+        supports_system: true
+        supports_vision: true               # Custom flag for vision capability
+        tier: "fast"
+        specialty: "vision"
+      qwen3-vl-plus:
+        model_id: "qwen3-vl-plus-2025-12-19"
+        context_tokens: 32768
+        max_output_tokens: 4096
+        price_input_per_1m: 1.50
+        price_output_per_1m: 4.50
+        supports_system: true
+        supports_vision: true
+        tier: "premium"
+        specialty: "vision"
 
   # ─── DeepSeek ────────────────────────────────────────────
   deepseek:
@@ -293,6 +315,10 @@ aliases:
   qwq:           [qwen, qwq-plus]         # Reasoning-Modell
   qwen3-big:     [qwen, qwen3-235b]
   qwen3-mid:     [qwen, qwen3-32b]
+  
+  # Vision-Language models
+  qwen-vl-flash: [qwen, qwen3-vl-flash]
+  qwen-vl-plus:  [qwen, qwen3-vl-plus]
 
   # ── OpenRouter (Fallback wenn Dashscope down) ─────────────
   qwen-max-or:   [openrouter, qwen-max-or]

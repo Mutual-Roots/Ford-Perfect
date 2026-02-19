@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""
+qwen-cost — DashScope-Intl Qwen Model Cost Tracking CLI
+
+Quick cost and usage check for Qwen models on DashScope-Intl.
+Pulls data from local logs (zero API token cost).
+
+USAGE:
+    qwen-cost [OPTIONS]
+
+OPTIONS:
+    --today         Show today's usage (default)
+    --yesterday     Show yesterday's usage
+    --week          Show current week's usage
+    --month         Show current month's usage
+    --all           Show all-time usage
+    --model NAME    Filter by model name (partial match)
+    --json          Output as JSON
+    --csv           Output as CSV
+    --budget        Show budget and credit status
+    --project       Show cost projections
+    --quiet, -q     Minimal output (just numbers)
+    --help, -h      Show this help message
+
+EXAMPLES:
+    qwen-cost                          # Today's summary
+    qwen-cost --week --json            # Week usage as JSON
+    qwen-cost --budget                 # Budget status
+    qwen-cost --model qwen-max         # Filter by model
+    qwen-cost --project                # Cost projections
+
+EXIT CODES:
+    0  Success
+    1  Error or budget alert triggered
+    2  Critical budget alert
+
+CONFIGURATION:
+    Log file: /opt/ai-orchestrator/var/logs/qwen-usage.tsv
+    Budget:   1M tokens (test), 70M tokens (welcome credit)
+    Alerts:   Warn at 50%, Critical at 80% of test budget
+"""
+
+import sys
+import os
+from pathlib import Path
+
+# Add lib to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lib.dashscope_monitor import DashScopeMonitor, TEST_BUDGET_TOKENS, WELCOME_CREDIT_TOKENS
+
+def format_number(n):
+    """Format number with commas."""
+    return f"{n:,}"
+
+def print_usage_table(usage, quiet=False):
+    """Print usage statistics in table format."""
+    if quiet:
+        print(f"{usage.total_tokens}\t{usage.total_cost_usd:.6f}\t{usage.calls_count}")
+        return
+    
+    print("=" * 70)
+    print(f"DashScope-Intl Qwen Usage Report")
+    print("=" * 70)
+    print(f"Period: {usage.period} ({usage.start_date} to {usage.end_date})")
+    print("-" * 70)
+    print(f"{'Metric':<30} {'Value':>38}")
+    print("-" * 70)
+    print(f"{'Total Tokens:':<30} {format_number(usage.total_tokens):>38}")
+    print(f"  {'Input Tokens:':<28} {format_number(usage.input_tokens):>38}")
+    print(f"  {'Output Tokens:':<28} {format_number(usage.output_tokens):>38}")
+    print(f"{'Total Cost (USD):':<30} ${usage.total_cost_usd:>36.6f}")
+    print(f"{'Total API Calls:':<30} {format_number(usage.calls_count):>38}")
+    
+    if usage.by_model:
+        print("\n" + "=" * 70)
+        print("Breakdown by Model:")
+        print("=" * 70)
+        print(f"{'Model':<35} {'Tokens':>12} {'Cost (USD)':>14} {'Calls':>8}")
+        print("-" * 70)
+        
+        sorted_models = sorted(usage.by_model.items(), key=lambda x: x[1]['cost_usd'], reverse=True)
+        for model, stats in sorted_models:
+            print(f"{model:<35} {format_number(stats['total_tokens']):>12} ${stats['cost_usd']:>12.6f} {stats['calls']:>8}")
+    
+    if usage.daily_breakdown:
+        print("\n" + "=" * 70)
+        print("Daily Breakdown:")
+        print("=" * 70)
+        print(f"{'Date':<15} {'Tokens':>15} {'Cost (USD)':>15} {'Calls':>10}")
+        print("-" * 70)
+        
+        for day in sorted(usage.daily_breakdown, key=lambda x: x['date'], reverse=True):
+            print(f"{day['date']:<15} {format_number(day['tokens']):>15} ${day['cost_usd']:>13.6f} {day['calls']:>10}")
+
+def print_budget_status(budget, quiet=False):
+    """Print budget and credit status."""
+    if quiet:
+        print(f"{budget.test_budget_used}\t{budget.test_budget_remaining}\t{budget.test_budget_pct}\t{budget.alert_level}")
+        return
+    
+    print("=" * 70)
+    print("Budget & Credit Status")
+    print("=" * 70)
+    
+    # Test budget
+    print(f"\n📊 Test Budget (1M tokens):")
+    print("-" * 70)
+    bar_length = 40
+    filled = int((budget.test_budget_pct / 100) * bar_length)
+    bar = "█" * filled + "░" * (bar_length - filled)
+    
+    alert_icon = "✅" if budget.alert_level == 'ok' else ("⚠️" if budget.alert_level == 'warn' else "🛑")
+    print(f"  Used:      {format_number(budget.test_budget_used):>12} / {format_number(budget.test_budget_tokens):<12} tokens ({budget.test_budget_pct:.1f}%)")
+    print(f"  Remaining: {format_number(budget.test_budget_remaining):>12} tokens")
+    print(f"  Progress:  [{bar}] {alert_icon}")
+    
+    if budget.alert_level == 'warn':
+        print(f"\n  ⚠️  WARNING: You've used {budget.test_budget_pct:.1f}% of your test budget!")
+    elif budget.alert_level == 'critical':
+        print(f"\n  🛑 CRITICAL: You've used {budget.test_budget_pct:.1f}% of your test budget!")
+    
+    # Welcome credit
+    welcome_pct = (budget.welcome_credit_used / budget.welcome_credit_total) * 100 if budget.welcome_credit_total > 0 else 0
+    print(f"\n🎁 Welcome Credit (70M tokens):")
+    print("-" * 70)
+    print(f"  Used:      {format_number(budget.welcome_credit_used):>12} / {format_number(budget.welcome_credit_total):<12} tokens ({welcome_pct:.2f}%)")
+    print(f"  Remaining: {format_number(budget.welcome_credit_remaining):>12} tokens")
+    
+    if budget.projected_exhaustion_days:
+        days = budget.projected_exhaustion_days
+        if days < 7:
+            print(f"\n  ⚠️  At current rate, welcome credit exhausted in {days} days!")
+        elif days < 30:
+            print(f"\n  ℹ️  At current rate, welcome credit exhausted in {days} days.")
+        else:
+            print(f"\n  ✅ At current rate, welcome credit lasts {days} days.")
+
+def print_projections(projection, quiet=False):
+    """Print cost projections."""
+    if quiet:
+        print(f"{projection['daily_average_cost_usd']:.6f}\t{projection['daily_average_tokens']}\t{projection['projected_monthly_cost_usd']:.2f}")
+        return
+    
+    print("=" * 70)
+    print("Cost Projections")
+    print("=" * 70)
+    print(f"\n{'Metric':<40} {'Value':>28}")
+    print("-" * 70)
+    print(f"{'Daily Average Cost:':<40} ${projection['daily_average_cost_usd']:>26.6f}")
+    print(f"{'Daily Average Tokens:':<40} {format_number(projection['daily_average_tokens']):>27}")
+    print(f"{'Projected Monthly Cost:':<40} ${projection['projected_monthly_cost_usd']:>26.2f}")
+    print(f"{'Projected Monthly Tokens:':<40} {format_number(projection['projected_monthly_tokens']):>27}")
+    
+    if projection['days_until_test_budget_exhausted'] is not None:
+        days = projection['days_until_test_budget_exhausted']
+        icon = "🛑" if days < 3 else ("⚠️" if days < 7 else "✅")
+        print(f"{'Days until test budget exhausted:':<40} {icon:>10} {days:>15} days")
+    
+    if projection['days_until_welcome_credit_exhausted'] is not None:
+        days = projection['days_until_welcome_credit_exhausted']
+        icon = "🛑" if days < 30 else ("⚠️" if days < 90 else "✅")
+        print(f"{'Days until welcome credit exhausted:':<40} {icon:>10} {days:>15} days")
+
+def show_help():
+    """Show help message."""
+    # Extract docstring
+    print(__doc__)
+
+def main():
+    """Main entry point."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='DashScope-Intl Qwen Model Cost Tracking CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False
+    )
+    
+    # Period options (mutually exclusive)
+    period_group = parser.add_mutually_exclusive_group()
+    period_group.add_argument('--today', action='store_true', help="Show today's usage (default)")
+    period_group.add_argument('--yesterday', action='store_true', help="Show yesterday's usage")
+    period_group.add_argument('--week', action='store_true', help="Show current week's usage")
+    period_group.add_argument('--month', action='store_true', help="Show current month's usage")
+    period_group.add_argument('--all', action='store_true', help="Show all-time usage")
+    
+    # Other options
+    parser.add_argument('--model', metavar='NAME', help='Filter by model name (partial match)')
+    parser.add_argument('--json', action='store_true', help='Output as JSON')
+    parser.add_argument('--csv', action='store_true', help='Output as CSV')
+    parser.add_argument('--budget', action='store_true', help='Show budget and credit status')
+    parser.add_argument('--project', action='store_true', help='Show cost projections')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Minimal output (just numbers)')
+    parser.add_argument('-h', '--help', action='store_true', help='Show this help message')
+    
+    args = parser.parse_args()
+    
+    # Show help
+    if args.help:
+        show_help()
+        sys.exit(0)
+    
+    # Determine period
+    if args.yesterday:
+        period = 'yesterday'
+    elif args.week:
+        period = 'week'
+    elif args.month:
+        period = 'month'
+    elif args.all:
+        period = 'all'
+    else:
+        period = 'today'
+    
+    # Initialize monitor
+    try:
+        monitor = DashScopeMonitor()
+    except Exception as e:
+        print(f"Error initializing monitor: {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Check if log file exists
+    if not monitor.log_file.exists():
+        if not args.quiet:
+            print(f"No usage data found. Log file: {monitor.log_file}", file=sys.stderr)
+            print("Usage data will appear after API calls are made.", file=sys.stderr)
+        sys.exit(0)
+    
+    # Handle budget status
+    if args.budget:
+        budget = monitor.get_remaining_credit()
+        
+        if args.json:
+            from dataclasses import asdict
+            import json
+            print(json.dumps(asdict(budget), indent=2))
+        else:
+            print_budget_status(budget, args.quiet)
+        
+        # Exit codes based on alert level
+        if budget.alert_level == 'critical':
+            sys.exit(2)
+        elif budget.alert_level == 'warn':
+            sys.exit(1)
+        sys.exit(0)
+    
+    # Handle projections
+    if args.project:
+        projection = monitor.project_monthly()
+        
+        if args.json:
+            import json
+            print(json.dumps(projection, indent=2))
+        else:
+            print_projections(projection, args.quiet)
+        
+        sys.exit(0)
+    
+    # Get usage
+    try:
+        usage = monitor.get_usage(period, args.model)
+    except Exception as e:
+        print(f"Error getting usage: {e}", file=sys.stderr)
+        sys.exit(1)
+    
+    # Output
+    if args.json:
+        from dataclasses import asdict
+        import json
+        print(json.dumps(asdict(usage), indent=2))
+    elif args.csv:
+        print(monitor.export_csv(period))
+    else:
+        print_usage_table(usage, args.quiet)
+    
+    sys.exit(0)
+
+if __name__ == '__main__':
+    main()

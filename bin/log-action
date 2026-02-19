@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+#
+# log-action - Log actions for Ford Perfect AI Orchestrator
+#
+# SYNOPSIS
+#   log-action [OPTIONS] --what <description> --why <rationale>
+#
+# DESCRIPTION
+#   Logs actions taken by Ford Perfect to ensure transparency and accountability
+#   in the human-AI partnership. All actions are logged to a JSONL file with
+#   optional Telegram notifications for high-risk actions.
+#
+# OPTIONS
+#   --what <text>        What action was taken (required)
+#   --why <text>         Why this action was taken - rationale (required)
+#   --risk <level>       Risk level: low|medium|high|critical (default: low)
+#   --cost <amount>      Cost incurred (e.g., "0.02 EUR" or "0")
+#   --outcome <text>     Result/outcome of the action
+#   --rollback <text>    How to undo this action if needed
+#   --category <cat>     Category tag (e.g., "file-edit", "api-call", "config")
+#   --notify             Force Telegram notification (for HIGH/CRITICAL auto-notified)
+#   --dry-run            Show what would be logged without writing
+#   --help, -h           Show this help message
+#
+# EXAMPLES
+#   # Simple low-risk file edit
+#   log-action --what "Updated config.yaml" --why "Added new camera endpoint" --risk low
+#
+#   # API call with cost
+#   log-action --what "Called OpenAI API for analysis" --why "User requested image analysis" \
+#              --risk medium --cost "0.015 EUR" --category api-call
+#
+#   # High-risk action with rollback
+#   log-action --what "Modified firewall rules" --why "Opened port 8080 for web service" \
+#              --risk high --rollback "Restore from /etc/iptables.backup" --notify
+#
+# FILES
+#   /opt/ai-orchestrator/var/logs/actions.jsonl  - Machine-readable action log
+#   /opt/ai-orchestrator/docs/action-log.md      - Human-readable markdown log
+#
+# EXIT CODES
+#   0  Success
+#   1  Missing required arguments
+#   2  Invalid risk level
+
+set -euo pipefail
+
+# Configuration
+LOG_FILE="/opt/ai-orchestrator/var/logs/actions.jsonl"
+MD_LOG_FILE="/opt/ai-orchestrator/docs/action-log.md"
+TELEGRAM_CHAT_ID="${FORD_TELEGRAM_CHAT_ID:-}"
+
+# Colors for terminal output
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default values
+RISK="low"
+COST="0"
+OUTCOME=""
+ROLLBACK=""
+CATEGORY=""
+NOTIFY=false
+DRY_RUN=false
+
+show_help() {
+    sed -n '/^#/p' "$0" | sed 's/^# \?//'
+    exit 0
+}
+
+error() {
+    echo -e "${RED}ERROR:${NC} $1" >&2
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}WARN:${NC} $1" >&2
+}
+
+info() {
+    echo -e "${GREEN}INFO:${NC} $1"
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --what)
+            WHAT="$2"
+            shift 2
+            ;;
+        --why)
+            WHY="$2"
+            shift 2
+            ;;
+        --risk)
+            RISK="$2"
+            shift 2
+            ;;
+        --cost)
+            COST="$2"
+            shift 2
+            ;;
+        --outcome)
+            OUTCOME="$2"
+            shift 2
+            ;;
+        --rollback)
+            ROLLBACK="$2"
+            shift 2
+            ;;
+        --category)
+            CATEGORY="$2"
+            shift 2
+            ;;
+        --notify)
+            NOTIFY=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --help|-h)
+            show_help
+            ;;
+        *)
+            error "Unknown option: $1. Use --help for usage."
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "${WHAT:-}" ]]; then
+    error "Missing required argument: --what"
+fi
+
+if [[ -z "${WHY:-}" ]]; then
+    error "Missing required argument: --why"
+fi
+
+# Validate risk level
+case "$RISK" in
+    low|medium|high|critical)
+        ;;
+    *)
+        error "Invalid risk level: $RISK (must be: low|medium|high|critical)"
+        ;;
+esac
+
+# Generate timestamp
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+TIMESTAMP_LOCAL=$(date +"%Y-%m-%d %H:%M:%S %Z")
+
+# Create JSON entry
+JSON_ENTRY=$(cat <<EOF
+{
+  "timestamp": "$TIMESTAMP",
+  "timestamp_local": "$TIMESTAMP_LOCAL",
+  "what": $(echo "$WHAT" | jq -Rs '.'),
+  "why": $(echo "$WHY" | jq -Rs '.'),
+  "risk": "$RISK",
+  "cost": "$COST",
+  "outcome": $(echo "$OUTCOME" | jq -Rs '.'),
+  "rollback": $(echo "$ROLLBACK" | jq -Rs '.'),
+  "category": "$CATEGORY",
+  "hostname": "$(hostname)",
+  "user": "${USER:-unknown}",
+  "session_id": "${FORD_SESSION_ID:-unknown}"
+}
+EOF
+)
+
+# Compact JSON to single line
+JSON_COMPACT=$(echo "$JSON_ENTRY" | jq -c '.')
+
+if [[ "$DRY_RUN" == true ]]; then
+    info "[DRY-RUN] Would log:"
+    echo "$JSON_COMPACT" | jq .
+    exit 0
+fi
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$(dirname "$MD_LOG_FILE")"
+
+# Append to JSONL file
+echo "$JSON_COMPACT" >> "$LOG_FILE"
+
+# Update markdown log
+update_markdown_log() {
+    local risk_emoji
+    case "$RISK" in
+        low) risk_emoji="🟢" ;;
+        medium) risk_emoji="🟡" ;;
+        high) risk_emoji="🔴" ;;
+        critical) risk_emoji="⚫" ;;
+    esac
+
+    local md_entry=$(cat <<EOF
+
+---
+
+### ${risk_emoji} [$TIMESTAMP_LOCAL] $WHAT
+
+**Why:** $WHY  
+**Risk Level:** $RISK  
+**Cost:** $COST  
+**Category:** ${CATEGORY:-uncategorized}
+$(if [[ -n "$OUTCOME" ]]; then echo "**Outcome:** $OUTCOME"; fi)
+$(if [[ -n "$ROLLBACK" ]]; then echo "**Rollback Plan:** $ROLLBACK"; fi)
+
+EOF
+)
+
+    # Prepend to markdown file (or create if doesn't exist)
+    if [[ -f "$MD_LOG_FILE" ]]; then
+        # Read existing content and prepend new entry
+        local existing=$(cat "$MD_LOG_FILE")
+        echo "# Action Log - Ford Perfect${md_entry}${existing}" > "$MD_LOG_FILE"
+    else
+        echo "# Action Log - Ford Perfect${md_entry}" > "$MD_LOG_FILE"
+    fi
+}
+
+update_markdown_log
+
+# Send Telegram notification for HIGH/CRITICAL or if --notify flag set
+send_telegram_notification() {
+    if [[ -z "$TELEGRAM_CHAT_ID" ]]; then
+        warn "Telegram chat ID not set (FORD_TELEGRAM_CHAT_ID). Skipping notification."
+        return
+    fi
+
+    local risk_emoji
+    case "$RISK" in
+        low) risk_emoji="🟢" ;;
+        medium) risk_emoji="🟡" ;;
+        high) risk_emoji="🔴" ;;
+        critical) risk_emoji="⚫" ;;
+    esac
+
+    local message=$(cat <<EOF
+${risk_emoji} *Ford Action Alert*
+
+*What:* $WHAT
+*Why:* $WHY
+*Risk:* $RISK
+*Cost:* $COST
+*Time:* $TIMESTAMP_LOCAL
+$(if [[ -n "$CATEGORY" ]]; then echo "*Category:* $CATEGORY"; fi)
+$(if [[ -n "$ROLLBACK" ]]; then echo "*Rollback:* $ROLLBACK"; fi)
+EOF
+)
+
+    # Use telegram-send if available, otherwise curl to bot API
+    if command -v telegram-send &> /dev/null; then
+        telegram-send --format markdown "$message" 2>/dev/null || true
+    elif [[ -n "${FORD_TELEGRAM_BOT_TOKEN:-}" ]]; then
+        curl -s -X POST "https://api.telegram.org/bot${FORD_TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=$TELEGRAM_CHAT_ID" \
+            -d "text=$message" \
+            -d "parse_mode=Markdown" > /dev/null || true
+    fi
+}
+
+# Auto-notify for HIGH/CRITICAL, or if explicitly requested
+if [[ "$RISK" == "high" || "$RISK" == "critical" || "$NOTIFY" == true ]]; then
+    send_telegram_notification
+fi
+
+# Output confirmation
+info "Action logged: $WHAT"
+info "Risk: $RISK | Cost: $COST"
+
+exit 0

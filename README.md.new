@@ -1,0 +1,72 @@
+# AI Orchestrator
+
+## Overview
+
+The AI Orchestrator is a critical-rationalist framework designed to manage and integrate various AI models into a cohesive system. This project adheres to Popper 2.0 principles of critical rationalism, emphasizing the continuous testing and refinement of hypotheses.
+
+## Installation
+
+### Path
+
+The AI Orchestrator is installed at `/opt/ai-orchestrator/`.
+
+### Dependencies
+
+Ensure you have the following dependencies installed:
+
+- Python 3.13
+- Chromium (for web-adapters)
+
+### Git Repository
+
+Clone the repository using the following command:
+
+```bash
+git clone git@github.com:USERNAME/ford-perfect.git
+```
+
+## Configuration
+
+### Primary Brain
+
+The primary AI model used is `qwen3.5-plus` via `dashscope-intl` (Singapore).
+
+### Cost Discipline
+
+- **Primary Model:** Qwen (cost-effective)
+- **Emergency Model:** Sonnet (use only when necessary)
+
+### Web-Adapters for Free Tier
+
+The following web-adapters are available for the free tier:
+
+- Claude
+- Gemini
+- Copilot
+- OpenAI
+
+These adapters utilize a shared Chromium profile for consistency.
+
+## FHS Compliance
+
+This project is compliant with the Filesystem Hierarchy Standard (FHS), ensuring that files are placed in appropriate directories according to their purpose and usage.
+
+## Usage
+
+### Example
+
+```bash
+./ai-orchestrator.sh
+```
+
+## Testing
+
+All functions are rigorously tested to ensure correctness. Minimal test cases are included within the codebase.
+
+## Edge Cases
+
+Edge cases are explicitly handled within the codebase. Any ambiguity is stated as a failing assertion.
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.

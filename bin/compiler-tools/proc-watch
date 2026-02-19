@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# proc-watch(1) — Process monitoring and alerting
+#
+# SYNOPSIS
+#   proc-watch [OPTIONS] [PATTERN...]
+#
+# DESCRIPTION
+#   Monitors processes matching PATTERN (regex on command line or PID).
+#   Reports resource usage, can alert on thresholds.
+#
+# OPTIONS
+#   -p, --pid PID        Monitor specific PID
+#   -n, --name PATTERN   Monitor processes matching PATTERN (regex)
+#   -j, --json           Output as JSON
+#   -t, --tsv            Output as TSV
+#   --top N              Show top N processes by CPU (default: all matches)
+#   --cpu-warn PCT       Warn if CPU > PCT%
+#   --mem-warn PCT       Warn if memory > PCT%
+#   --watch              Continuous mode (refresh every 2s)
+#   -h, --help           Show this help message
+#   --version            Show version
+#
+# EXIT CODES
+#   0  Processes found, within thresholds
+#   1  No matching processes found
+#   2  Threshold exceeded (warning)
+#
+set -euo pipefail
+
+VERSION="1.0.0"
+OUTPUT_MODE="human"  # human|json|tsv
+PID_FILTER=""
+NAME_PATTERN=""
+TOP_N=""
+CPU_WARN=""
+MEM_WARN=""
+WATCH_MODE=false
+REFRESH_INTERVAL=2
+
+die() { echo "proc-watch: $*" >&2; exit 2; }
+usage() {
+    grep '^#' "$0" | grep -v '^#!/' | sed 's/^# \?//'
+    exit "${1:-0}"
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)      usage 0 ;;
+        --version)      echo "proc-watch $VERSION"; exit 0 ;;
+        -j|--json)      OUTPUT_MODE="json"; shift ;;
+        -t|--tsv)       OUTPUT_MODE="tsv"; shift ;;
+        -p|--pid)       PID_FILTER="${2:?--pid requires a PID}"; shift 2 ;;
+        -n|--name)      NAME_PATTERN="${2:?--name requires a pattern}"; shift 2 ;;
+        --top)          TOP_N="${2:?--top requires a number}"; shift 2 ;;
+        --cpu-warn)     CPU_WARN="${2:?--cpu-warn requires a percentage}"; shift 2 ;;
+        --mem-warn)     MEM_WARN="${2:?--mem-warn requires a percentage}"; shift 2 ;;
+        --watch)        WATCH_MODE=true; shift ;;
+        --)             shift; break ;;
+        -*)             die "unknown option: $1 (try --help)" ;;
+        *)              NAME_PATTERN="$1"; shift ;;
+    esac
+done
+
+# Validate filters
+if [[ -z "$PID_FILTER" && -z "$NAME_PATTERN" ]]; then
+    die "no filter specified. Use --pid, --name, or provide a pattern argument"
+fi
+
+# Collect process data using awk for proper parsing
+collect_processes() {
+    local ps_cmd
+    
+    if [[ -n "$PID_FILTER" ]]; then
+        ps_cmd="ps -p $PID_FILTER -o pid=,ppid=,user=,%cpu=,%mem=,rss=,state=,cputime=,comm=,args="
+    else
+        ps_cmd="ps -eo pid=,ppid=,user=,%cpu=,%mem=,rss=,state=,cputime=,comm=,args="
+    fi
+    
+    local ps_output
+    ps_output=$(eval "$ps_cmd" 2>/dev/null || true)
+    
+    # Filter by pattern if specified
+    if [[ -n "$NAME_PATTERN" ]]; then
+        ps_output=$(echo "$ps_output" | grep -E "$NAME_PATTERN" | grep -v "grep.*$NAME_PATTERN" || true)
+    fi
+    
+    if [[ -z "$ps_output" ]]; then
+        return 1
+    fi
+    
+    # Apply --top filter if specified
+    if [[ -n "$TOP_N" ]]; then
+        ps_output=$(echo "$ps_output" | sort -t' ' -k4 -rn | head -n "$TOP_N")
+    fi
+    
+    echo "$ps_output"
+}
+
+output_process_human() {
+    local line="$1"
+    
+    # Parse with awk to handle variable-length args field
+    local pid ppid user cpu mem rss state cputime comm
+    read -r pid ppid user cpu mem rss state cputime comm <<< "$(echo "$line" | awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9}')"
+    
+    local rss_mb=$((rss / 1024))
+    local args
+    args=$(echo "$line" | awk '{$1=$2=$3=$4=$5=$6=$7=$8=$9=""; print substr($0,10)}' | sed 's/^[[:space:]]*//')
+    
+    printf "  PID: %-8s  PPID: %-8s  User: %-12s\n" "$pid" "$ppid" "$user"
+    printf "  CPU: %-7s%%  MEM: %-7s%%  RSS: %d MB\n" "$cpu" "$mem" "$rss_mb"
+    printf "  State: %-6s  Time: %-12s\n" "$state" "$cputime"
+    printf "  Command: %s\n" "${args:-$comm}"
+    echo "  ────────────────────────────────────────────────"
+}
+
+output_all_human() {
+    local processes="$1"
+    local count=0
+    
+    echo "╔════════════════════════════════════════════════════╗"
+    echo "║           Process Monitor                          ║"
+    echo "╠════════════════════════════════════════════════════╣"
+    
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        ((count++)) || true
+        output_process_human "$line"
+    done <<< "$processes"
+    
+    if [[ $count -eq 0 ]]; then
+        echo "║  No matching processes found                       ║"
+    else
+        printf "║  Total: %-39d ║\n" "$count"
+    fi
+    echo "╚════════════════════════════════════════════════════╝"
+}
+
+output_json() {
+    local processes="$1"
+    local first=true
+    
+    echo "["
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        
+        # Parse fields
+        local pid ppid user cpu mem rss state cputime comm
+        read -r pid ppid user cpu mem rss state cputime comm <<< "$(echo "$line" | awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9}')"
+        local args
+        args=$(echo "$line" | awk '{$1=$2=$3=$4=$5=$6=$7=$8=$9=""; gsub(/^[[:space:]]+/, ""); print}' | sed 's/\\/\\\\/g; s/"/\\"/g')
+        
+        local rss_mb=$((rss / 1024))
+        
+        if [[ "$first" == "true" ]]; then
+            first=false
+        else
+            echo ","
+        fi
+        
+        cat <<EOF
+  {
+    "pid": $pid,
+    "ppid": $ppid,
+    "user": "$user",
+    "cpu_percent": $cpu,
+    "mem_percent": $mem,
+    "mem_rss_mb": $rss_mb,
+    "state": "$state",
+    "time_cpu": "$cputime",
+    "command": "${args:-$comm}"
+  }
+EOF
+    done <<< "$processes"
+    echo ""
+    echo "]"
+}
+
+output_tsv() {
+    local processes="$1"
+    
+    # Header
+    printf "pid\tppid\tuser\tcpu_percent\tmem_percent\tmem_rss_mb\tstate\ttime_cpu\tcommand\n"
+    
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        
+        local pid ppid user cpu mem rss state cputime comm
+        read -r pid ppid user cpu mem rss state cputime comm <<< "$(echo "$line" | awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9}')"
+        local args
+        args=$(echo "$line" | awk '{$1=$2=$3=$4=$5=$6=$7=$8=$9=""; gsub(/^[[:space:]]+/, ""); print}')
+        
+        local rss_mb=$((rss / 1024))
+        printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n" \
+            "$pid" "$ppid" "$user" "$cpu" "$mem" "$rss_mb" "$state" "$cputime" "${args:-$comm}"
+    done <<< "$processes"
+}
+
+check_thresholds() {
+    local processes="$1"
+    local exceeded=false
+    
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        
+        local pid cpu mem
+        read -r pid _ _ cpu mem _ <<< "$(echo "$line" | awk '{print $1, $4, $5}')"
+        
+        # Remove decimal points for comparison
+        local cpu_int=${cpu%.*}
+        local mem_int=${mem%.*}
+        
+        if [[ -n "$CPU_WARN" && ${cpu_int:-0} -ge ${CPU_WARN%.*} ]]; then
+            echo "WARNING: PID $pid CPU at ${cpu}% exceeds threshold ${CPU_WARN}%" >&2
+            exceeded=true
+        fi
+        
+        if [[ -n "$MEM_WARN" && ${mem_int:-0} -ge ${MEM_WARN%.*} ]]; then
+            echo "WARNING: PID $pid MEM at ${mem}% exceeds threshold ${MEM_WARN}%" >&2
+            exceeded=true
+        fi
+    done <<< "$processes"
+    
+    if [[ "$exceeded" == "true" ]]; then
+        return 2
+    fi
+    return 0
+}
+
+run_once() {
+    local processes
+    processes=$(collect_processes) || {
+        case "$OUTPUT_MODE" in
+            json) echo "[]" ;;
+            tsv)  printf "pid\tppid\tuser\tcpu_percent\tmem_percent\tmem_rss_mb\tstate\ttime_cpu\tcommand\n" ;;
+            human)
+                echo "╔════════════════════════════════════════════════════╗"
+                echo "║           Process Monitor                          ║"
+                echo "╠════════════════════════════════════════════════════╣"
+                echo "║  No matching processes found                       ║"
+                echo "╚════════════════════════════════════════════════════╝"
+                ;;
+        esac
+        return 1
+    }
+    
+    case "$OUTPUT_MODE" in
+        human) output_all_human "$processes" ;;
+        json)  output_json "$processes" ;;
+        tsv)   output_tsv "$processes" ;;
+    esac
+    
+    # Check thresholds
+    if [[ -n "$CPU_WARN" || -n "$MEM_WARN" ]]; then
+        check_thresholds "$processes"
+        return $?
+    fi
+    
+    return 0
+}
+
+# Main execution
+if [[ "$WATCH_MODE" == "true" ]]; then
+    # Continuous mode
+    trap 'echo ""; echo "Stopped."; exit 0' INT TERM
+    while true; do
+        clear
+        run_once || true
+        sleep "$REFRESH_INTERVAL"
+    done
+else
+    # Single snapshot
+    run_once
+    exit_code=$?
+    exit $exit_code
+fi
