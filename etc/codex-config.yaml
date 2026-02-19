@@ -1,0 +1,94 @@
+# Codex Integration Configuration
+
+codex:
+  # Primary mode: web (cost-free) | cli (requires approval) | auto (router decides)
+  mode: web
+  
+  # CLI model (only used if mode=cli or explicitly requested)
+  cli_model: o3
+  
+  # Context window limits
+  max_context_tokens: 50000
+  
+  # Timeout settings (seconds)
+  timeout: 300
+
+git:
+  # Automatic branch creation
+  auto_branch: true
+  
+  # Branch naming prefix
+  branch_prefix: feature
+  
+  # Commit message style
+  commit_style: conventional  # conventional | simple
+  
+  # Auto-push thresholds
+  auto_push_threshold:
+    files: 3
+    lines_added: 100
+    lines_deleted: 20
+  
+  # Always require review for these patterns
+  require_review_patterns:
+    - "**/config/**"
+    - "**/*.env*"
+    - "requirements*.txt"
+    - "**/database/**"
+    - "**/auth/**"
+
+safety:
+  # Maximum files that can be changed without review
+  max_files_changed: 10
+  
+  # Maximum lines that can be changed without review
+  max_lines_changed: 500
+  
+  # Require human review if:
+  require_review:
+    deletions_gt: 50
+    touches_config: true
+    security_sensitive: true
+    database_changes: true
+  
+  # Forbidden command patterns
+  forbidden_patterns:
+    - "rm -rf /"
+    - "curl .* \| bash"
+    - "wget .* \| sh"
+    - "chmod 777"
+    - "sudo"
+  
+  # Command whitelist (only these shells commands allowed)
+  command_whitelist:
+    - "ls"
+    - "cat"
+    - "grep"
+    - "find"
+    - "git"
+    - "python"
+    - "pytest"
+    - "make"
+
+logging:
+  # Log level: debug | info | warning | error
+  level: info
+  
+  # Log file location
+  file: /opt/ai-orchestrator/var/logs/codex-tasks.log
+  
+  # Log format: json | tsv | text
+  format: tsv
+  
+  # Include task content in logs (be careful with sensitive data)
+  include_task_content: false
+
+cost_control:
+  # Monthly budget for CLI usage (USD) - 0 means web-only
+  monthly_budget_usd: 0
+  
+  # Alert threshold (percentage of budget)
+  alert_threshold: 80
+  
+  # Hard stop at budget limit
+  hard_limit: true

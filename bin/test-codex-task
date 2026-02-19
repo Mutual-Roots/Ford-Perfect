@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Test script for codex-task prototype
+# 
+# This script validates the basic functionality of codex-task
+# without requiring actual OpenAI session (uses dry-run and mock modes)
+
+set -euo pipefail
+
+ORCH="/opt/ai-orchestrator"
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+pass_test() {
+    echo -e "${GREEN}✓ PASS${NC}: $1"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+}
+
+fail_test() {
+    echo -e "${RED}✗ FAIL${NC}: $1"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+}
+
+info() {
+    echo -e "${YELLOW}[INFO]${NC}: $1"
+}
+
+echo "========================================"
+echo "Codex-Task Prototype Test Suite"
+echo "========================================"
+echo ""
+
+# Test 1: Help command
+info "Test 1: Help command"
+if $ORCH/bin/codex-task --help | grep -q "codex-task(1)"; then
+    pass_test "Help command works"
+else
+    fail_test "Help command failed"
+fi
+
+# Test 2: Dry run mode
+info "Test 2: Dry run mode"
+if $ORCH/bin/codex-task --dry-run "test task" | grep -q "DRY RUN MODE"; then
+    pass_test "Dry run mode works"
+else
+    fail_test "Dry run mode failed"
+fi
+
+# Test 3: Task type validation
+info "Test 3: Task type options"
+for type in coding refactor test debug feature; do
+    if $ORCH/bin/codex-task --dry-run --type "$type" "test" | grep -q "Task type: $type"; then
+        pass_test "Task type '$type' accepted"
+    else
+        fail_test "Task type '$type' failed"
+    fi
+done
+
+# Test 4: Safety validation (should block forbidden patterns)
+info "Test 4: Safety validation"
+set +e  # Temporarily disable exit-on-error
+output=$($ORCH/bin/codex-task "rm -rf /tmp/test" 2>&1)
+set -e
+if echo "$output" | grep -q "Safety violation"; then
+    pass_test "Safety validation blocks dangerous commands"
+else
+    fail_test "Safety validation should block 'rm -rf'"
+fi
+
+# Test 5: Verbose mode
+info "Test 5: Verbose mode"
+if $ORCH/bin/codex-task --dry-run -v "test task" 2>&1 | grep -qi "INFO"; then
+    pass_test "Verbose mode shows info messages"
+else
+    fail_test "Verbose mode not working"
+fi
+
+# Test 6: Router analysis
+info "Test 6: Codex router"
+if python3 $ORCH/lib/router/codex_router.py --recommend | grep -q "Tool Recommendations"; then
+    pass_test "Router recommendations work"
+else
+    fail_test "Router recommendations failed"
+fi
+
+# Test 7: Router JSON output
+info "Test 7: Router JSON output"
+if python3 $ORCH/lib/router/codex_router.py --task "test" --analyze --json | grep -q '"task_type"'; then
+    pass_test "Router JSON output valid"
+else
+    fail_test "Router JSON output invalid"
+fi
+
+# Test 8: Configuration file exists
+info "Test 8: Configuration files"
+if [[ -f "$ORCH/etc/codex-config.yaml" ]]; then
+    pass_test "Config file exists"
+else
+    fail_test "Config file missing"
+fi
+
+# Test 9: Documentation exists
+info "Test 9: Documentation"
+if [[ -f "$ORCH/docs/codex-integration.md" ]]; then
+    pass_test "Documentation exists"
+else
+    fail_test "Documentation missing"
+fi
+
+# Test 10: Adapter module exists
+info "Test 10: Adapter module"
+if [[ -f "$ORCH/lib/adapters/codex_web.py" ]]; then
+    pass_test "Web adapter exists"
+else
+    fail_test "Web adapter missing"
+fi
+
+# Summary
+echo ""
+echo "========================================"
+echo "Test Summary"
+echo "========================================"
+echo -e "Passed: ${GREEN}$TESTS_PASSED${NC}"
+echo -e "Failed: ${RED}$TESTS_FAILED${NC}"
+echo ""
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+    echo -e "${GREEN}All tests passed!${NC}"
+    exit 0
+else
+    echo -e "${RED}Some tests failed.${NC}"
+    exit 1
+fi
