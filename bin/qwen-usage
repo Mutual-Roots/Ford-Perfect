@@ -33,7 +33,8 @@ printf "%-22s %d tokens\n" "Today:"        "$TOK_TODAY"
 printf "%-22s %d tokens\n" "This month:"   "$TOK_MONTH"
 printf "%-22s \$%s\n"      "Est. cost:"    "$COST"
 printf "%-22s %d / %d\n"  "Free tier left:" "$REMAIN" "$FREE_TIER"
-
-[ "$TOK_MONTH" -gt "$ALERT_AT" ] && {
-  printf "\n⚠ ALERT: approaching free tier limit!\n" >&2; exit 1
-}
+if [ "$TOK_MONTH" -gt "$ALERT_AT" ]; then
+  printf "\n⚠ ALERT: %d tokens — approaching free tier limit!\n" "$TOK_MONTH" >&2
+  exit 1
+fi
+exit 0

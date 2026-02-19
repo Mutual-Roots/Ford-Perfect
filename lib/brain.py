@@ -73,6 +73,7 @@ def ask(messages, model="qwen-plus-latest", max_tokens=2000, system=None, fallba
         result = ask_qwen(messages, model=model, max_tokens=max_tokens, system=system or FORD_SYSTEM)
         result["latency_ms"] = int((time.time()-t0)*1000)
         result["fallback_used"] = False
+        _log_usage(result)
         return result
     except Exception as e:
         if not fallback:
