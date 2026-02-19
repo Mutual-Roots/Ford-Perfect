@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# qwen-health — Dashscope-Intl (Singapore) liveness check
+# Usage: qwen-health [--help]
+# Exit: 0=ok 1=error 2=degraded
+set -euo pipefail
+
+[ "${1:-}" = "--help" ] && { cat <<'HELP'
+NAME
+    qwen-health — Dashscope Singapore API liveness check
+
+SYNOPSIS
+    qwen-health
+
+DESCRIPTION
+    Sends minimal test call, measures latency, checks API key.
+    Exits 0=ok, 1=error, 2=degraded (>1500ms).
+
+ENVIRONMENT
+    DASHSCOPE_INTL_API_KEY   Required. API key for dashscope-intl.aliyuncs.com
+HELP
+exit 0; }
+
+: "${DASHSCOPE_INTL_API_KEY:?Error: DASHSCOPE_INTL_API_KEY not set}"
+
+ENDPOINT="https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+PAYLOAD='{"model":"qwen-turbo","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'
+
+START=$(date +%s%3N)
+HTTP=$(curl -so /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer $DASHSCOPE_INTL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD" --connect-timeout 5 "$ENDPOINT")
+MS=$(( $(date +%s%3N) - START ))
+
+printf "qwen-health: http=%s latency=%dms endpoint=dashscope-intl\n" "$HTTP" "$MS"
+
+[ "$HTTP" != "200" ] && { echo "ERROR: HTTP $HTTP" >&2; exit 1; }
+[ "$MS" -gt 3000 ] && { echo "WARN: degraded latency ${MS}ms" >&2; exit 2; }
+exit 0

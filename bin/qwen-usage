@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# qwen-usage — Dashscope token usage monitor
+# Usage: qwen-usage [--help]
+set -euo pipefail
+
+LOG="/opt/ai-orchestrator/var/logs/qwen-usage.tsv"
+FREE_TIER=1000000
+ALERT_AT=800000
+
+[ "${1:-}" = "--help" ] && { cat <<'HELP'
+NAME
+    qwen-usage — Qwen/Dashscope token usage from local log
+
+SYNOPSIS
+    qwen-usage [--help]
+
+EXIT
+    0 = ok, 1 = error or >800k tokens used
+HELP
+exit 0; }
+
+[ -f "$LOG" ] || { echo "No usage data yet (log: $LOG)"; exit 0; }
+
+TODAY=$(date -u +%Y-%m-%d)
+MONTH=$(date -u +%Y-%m)
+
+TOK_TODAY=$(awk -F'\t' -v d="$TODAY" '$1 ~ d {t+=$4+$5} END {printf "%d",t}' "$LOG")
+TOK_MONTH=$(awk -F'\t' -v m="$MONTH" '$1 ~ m {t+=$4+$5} END {printf "%d",t}' "$LOG")
+COST=$(awk -F'\t' -v m="$MONTH" '$1 ~ m {c+=$6} END {printf "%.6f",c}' "$LOG")
+REMAIN=$(( FREE_TIER - TOK_MONTH ))
+
+printf "%-22s %d tokens\n" "Today:"        "$TOK_TODAY"
+printf "%-22s %d tokens\n" "This month:"   "$TOK_MONTH"
+printf "%-22s \$%s\n"      "Est. cost:"    "$COST"
+printf "%-22s %d / %d\n"  "Free tier left:" "$REMAIN" "$FREE_TIER"
+
+[ "$TOK_MONTH" -gt "$ALERT_AT" ] && {
+  printf "\n⚠ ALERT: approaching free tier limit!\n" >&2; exit 1
+}

@@ -91,3 +91,18 @@ if __name__ == "__main__":
     print(f"Brain: {r['text']}")
     print(f"Model: {r['model']} | Provider: {r['provider']} | {r['latency_ms']}ms | Fallback: {r['fallback_used']}")
     print(f"Usage: {r['usage']}")
+
+# Usage logging (Tab-separated: timestamp, model, provider, input, output, cost_usd)
+import datetime
+
+USAGE_LOG = "/opt/ai-orchestrator/var/logs/qwen-usage.tsv"
+
+def _log_usage(result: dict, input_tokens: int = 0) -> None:
+    usage = result.get("usage", {})
+    inp = usage.get("prompt_tokens", input_tokens)
+    out = usage.get("completion_tokens", 0)
+    # qwen-plus: ~$0.0004/1k input, $0.0012/1k output
+    cost = (inp * 0.0000004) + (out * 0.0000012)
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(USAGE_LOG, "a") as f:
+        f.write(f"{ts}\t{result.get('model','?')}\t{result.get('provider','?')}\t{inp}\t{out}\t{cost:.8f}\n")
